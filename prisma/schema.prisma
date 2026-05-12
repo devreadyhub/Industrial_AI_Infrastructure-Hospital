@@ -1,0 +1,346 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ============ PATIENTS ============
+model Patient {
+  id             Int         @id @default(autoincrement())
+  firstName      String
+  lastName       String
+  email          String?     @unique
+  phone          String?
+  dateOfBirth    DateTime?
+  triageLevel    TriageLevel
+  ward           Ward        @relation(fields: [wardId], references: [id])
+  wardId         Int
+  admissionNotes String?
+  admissionDate  DateTime    @default(now())
+  dischargeDate  DateTime?
+
+  // Relations
+  labTests       LabTest[]
+  prescriptions  Prescription[]
+  billingRecords BillingRecord[]
+  visitors       Visitor[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum TriageLevel {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  NON_URGENT
+}
+
+// ============ STAFF ============
+model Staff {
+  id            Int         @id @default(autoincrement())
+  firstName     String
+  lastName      String
+  email         String?     @unique
+  phone         String?
+  role          String // Doctor, Nurse, Technician, etc.
+  seniority     Seniority
+  shiftStatus   ShiftStatus
+  department    String?
+  licenseNumber String?     @unique
+  certifications String[] // e.g., ["ACLS", "BLS", "PALS"]
+  currentLocation String? // Current ward or location
+
+  // Relations
+  facilityAssignments Facility[]
+  labTestsPerformed   LabTest[]
+  prescriptions       Prescription[]
+  triggeredEmergencies Emergency[] @relation("EmergencyTrigger")
+  emergencyResponses  StaffEmergency[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum Seniority {
+  JUNIOR
+  SENIOR
+  LEAD
+  CONSULTANT
+  CHIEF
+}
+
+enum ShiftStatus {
+  ON_DUTY
+  OFF_DUTY
+  ON_LEAVE
+  ON_CALL
+}
+
+// ============ WARD ============
+model Ward {
+  id               Int    @id @default(autoincrement())
+  wardName         String
+  capacity         Int
+  currentOccupancy Int    @default(0)
+  department       String
+
+  patients Patient[]
+  visitors Visitor[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ PHARMACY ============
+model Pharmacy {
+  id            Int             @id @default(autoincrement())
+  drugName      String
+  drugCode      String          @unique
+  stock         Int
+  minStockLevel Int
+  maxStockLevel Int
+  expiryDate    DateTime
+  salesHistory  PharmacySales[]
+  prescriptions Prescription[]
+  unitPrice     Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Prescription {
+  id           Int      @id @default(autoincrement())
+  patient      Patient  @relation(fields: [patientId], references: [id])
+  patientId    Int
+  pharmacy     Pharmacy @relation(fields: [pharmacyId], references: [id])
+  pharmacyId   Int
+  prescribedBy Staff    @relation(fields: [staffId], references: [id])
+  staffId      Int
+  dosage       String
+  frequency    String // e.g., "3 times a day"
+  duration     Int // in days
+  quantity     Int
+  notes        String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PharmacySales {
+  id         Int      @id @default(autoincrement())
+  pharmacy   Pharmacy @relation(fields: [pharmacyId], references: [id])
+  pharmacyId Int
+  quantity   Int
+  salePrice  Float
+  saleDate   DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ LABS ============
+model LabTest {
+  id                   Int       @id @default(autoincrement())
+  testId               String    @unique
+  patient              Patient   @relation(fields: [patientId], references: [id])
+  patientId            Int
+  performedBy          Staff     @relation(fields: [staffId], references: [id])
+  staffId              Int
+  testName             String
+  testCategory         String // Blood, Imaging, Pathology, etc.
+  resultData           String?   @db.Text // JSON or structured result
+  status               LabStatus @default(PENDING)
+  notes                String?   @db.Text
+  sampleCollectionDate DateTime?
+  resultDate           DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum LabStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REVIEWED
+  CANCELLED
+}
+
+// ============ FACILITIES ============
+model Facility {
+  id              Int              @id @default(autoincrement())
+  resourceName    String // MRI, CT Scanner, Operating Theater, etc.
+  resourceType    String
+  location        String
+  status          FacilityStatus
+  assignedStaff   Staff?           @relation(fields: [staffId], references: [id])
+  staffId         Int?
+  maintenanceLogs MaintenanceLog[]
+  purchaseDate    DateTime?
+  warrantyExpiry  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum FacilityStatus {
+  OPERATIONAL
+  UNDER_MAINTENANCE
+  OUT_OF_SERVICE
+  SCHEDULED_MAINTENANCE
+}
+
+model MaintenanceLog {
+  id              Int       @id @default(autoincrement())
+  facility        Facility  @relation(fields: [facilityId], references: [id])
+  facilityId      Int
+  maintenanceType String // Preventive, Corrective, Inspection
+  description     String    @db.Text
+  performedDate   DateTime
+  nextScheduled   DateTime?
+  notes           String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ BILLING ============
+model BillingRecord {
+  id                Int           @id @default(autoincrement())
+  patient           Patient       @relation(fields: [patientId], references: [id])
+  patientId         Int
+  invoiceNumber     String        @unique
+  insuranceProvider String?
+  totalAmount       Float
+  amountCovered     Float       @default(0)
+  amountDue         Float
+  paymentStatus     PaymentStatus
+  paymentMethod     String? // Credit Card, Insurance, Cash, etc.
+  dueDate           DateTime
+  paidDate          DateTime?
+  notes             String?       @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIALLY_PAID
+  FULLY_PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ============ VISITOR MANAGEMENT ============
+model Visitor {
+  id            Int           @id @default(autoincrement())
+  firstName     String
+  lastName      String
+  phone         String?
+  email         String?
+  relationship  String // Family, Friend, Legal, etc.
+  patient       Patient       @relation(fields: [patientId], references: [id])
+  patientId     Int
+  ward          Ward          @relation(fields: [wardId], references: [id])
+  wardId        Int
+  checkInTime   DateTime      @default(now())
+  checkOutTime  DateTime?
+  purpose       String?       @db.Text // Reason for visit
+  checkedInBy   String // Security staff name/ID
+  status        VisitorStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum VisitorStatus {
+  ACTIVE
+  CHECKED_OUT
+  ARCHIVED
+}
+
+// ============ AUDIT LOGS ============
+model AuditLog {
+  id              Int                  @id @default(autoincrement())
+  interactionType String               // 'ai_query', 'sql_query', 'vector_search', etc.
+  actionType      String?              // e.g. SENSITIVE_QUERY, TAB_ACCESS, DATA_MODIFICATION
+  userPrompt      String
+  systemResponse  String?              @db.Text
+  sqlGenerated    String?
+  vectorQuery     String?
+  rawOutput       String               @db.Text
+  finalOutput     String               @db.Text
+  accessStatus    AuditAccessStatus    @default(SUCCESS)
+  status          AuditStatus
+  errorMessage    String?
+  userId          Int?
+  userRole        String?
+  ipAddress       String?
+  userAgent       String?
+  metadata        String?                // Additional context like path, method, etc.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AuditStatus {
+  SUCCESS
+  ERROR
+  PARTIAL
+}
+
+enum AuditAccessStatus {
+  SUCCESS
+  DENIED_BY_PRIVACY_FILTER
+  BREAK_GLASS_OVERRIDE
+}
+
+// ============ EMERGENCY DISPATCH ============
+model Emergency {
+  id            Int             @id @default(autoincrement())
+  incidentType  String // "Code Blue", "Fire", "Active Shooter", etc.
+  location      String // Ward, room, or area
+  priority      EmergencyPriority
+  status        EmergencyStatus @default(ACTIVE)
+  description   String?         @db.Text
+  triggeredBy   Staff?          @relation("EmergencyTrigger", fields: [staffId], references: [id])
+  staffId       Int?
+  patientId     Int? // If patient-specific
+  responders    StaffEmergency[]
+  actionsTaken  String?         @db.Text
+  resolvedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StaffEmergency {
+  id          Int       @id @default(autoincrement())
+  staff       Staff     @relation(fields: [staffId], references: [id])
+  staffId     Int
+  emergency   Emergency @relation(fields: [emergencyId], references: [id])
+  emergencyId Int
+  role        String? // e.g., "Lead Responder", "Assistant"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum EmergencyPriority {
+  HIGH
+  CRITICAL
+  CODE_BLUE
+}
+
+enum EmergencyStatus {
+  ACTIVE
+  RESPONDING
+  RESOLVED
+  CANCELLED
+}
