@@ -1,9 +1,20 @@
 export type AIUserRole = 'visitor' | 'staff' | 'admin';
 
 export const normalizeAIUserRole = (role: string | undefined): AIUserRole => {
-  const lower = (role || 'visitor').toLowerCase();
-  if (lower === 'staff' || lower === 'admin') {
-    return lower as AIUserRole;
+  const normalized = (role || 'visitor').trim().toLowerCase();
+  if (normalized.includes('admin')) {
+    return 'admin';
+  }
+  if (
+    normalized === 'staff' ||
+    normalized.includes('doctor') ||
+    normalized.includes('nurse') ||
+    normalized.includes('clinical') ||
+    normalized.includes('pharmacy') ||
+    normalized.includes('technician') ||
+    normalized.includes('system admin')
+  ) {
+    return 'staff';
   }
   return 'visitor';
 };

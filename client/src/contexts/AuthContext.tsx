@@ -1,5 +1,24 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
+type AuthRole = 'visitor' | 'staff' | 'admin';
+
+const normalizeRole = (role: string | undefined): AuthRole => {
+  const normalized = (role || 'visitor').trim().toLowerCase();
+  if (normalized.includes('admin')) return 'admin';
+  if (
+    normalized === 'staff' ||
+    normalized.includes('doctor') ||
+    normalized.includes('nurse') ||
+    normalized.includes('clinical') ||
+    normalized.includes('pharmacy') ||
+    normalized.includes('technician') ||
+    normalized.includes('system admin')
+  ) {
+    return 'staff';
+  }
+  return 'visitor';
+};
+
 export interface User {
   id: string;
   name: string;
@@ -32,11 +51,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (token && storedUser) {
         try {
           const parsedUser = JSON.parse(storedUser);
-          setUser(parsedUser);
+          const normalizedUser = {
+            ...parsedUser,
+            role: normalizeRole(parsedUser.role),
+          };
+          setUser(normalizedUser);
+          localStorage.setItem('authUser', JSON.stringify(normalizedUser));
+          localStorage.setItem('userRole', normalizedUser.role);
+          localStorage.setItem('userId', normalizedUser.staffId || normalizedUser.id);
         } catch (error) {
           console.error('[AuthContext] Failed to parse stored user:', error);
           localStorage.removeItem('authToken');
           localStorage.removeItem('authUser');
+          localStorage.removeItem('userRole');
+          localStorage.removeItem('userId');
         }
       }
 
@@ -47,9 +75,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = (newUser: User) => {
-    setUser(newUser);
+    const normalizedUser = {
+      ...newUser,
+      role: normalizeRole(newUser.role),
+    };
+    setUser(normalizedUser);
     // Store user in localStorage for persistence
-    localStorage.setItem('authUser', JSON.stringify(newUser));
+    localStorage.setItem('authUser', JSON.stringify(normalizedUser));
+    localStorage.setItem('userRole', normalizedUser.role);
+    localStorage.setItem('userId', normalizedUser.staffId || normalizedUser.id);
   };
 
   const logout = () => {
@@ -58,6 +92,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     localStorage.removeItem('tokenExpiry');
+    localStorage.removeItem('userRole');
+    localStorage.removeItem('userId');
   };
 
   const updateClearanceLevel = (level: number) => {

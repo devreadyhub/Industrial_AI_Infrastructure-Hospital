@@ -10,22 +10,68 @@ const router = Router();
 router.use(authenticateAIUser);
 router.use(applyRBAC);
 
+// List lab tests
+router.get('/', checkClearance(UserRole.CLINICAL), async (_req: Request, res: Response) => {
+  try {
+    const labTests = await prisma.labTest.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(
+      labTests.map((labTest) => ({
+        ...labTest,
+        resultData: labTest.resultData ? JSON.parse(labTest.resultData) : null,
+      }))
+    );
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch lab tests' });
+  }
+});
+
 // Submit lab test results
 router.post('/', checkClearance(UserRole.CLINICAL), async (req: Request, res: Response) => {
   try {
-    const { testId, testName, testCategory, resultData, status, notes, resultDate } = req.body;
+    const {
+      testId,
+      testName,
+      testCategory,
+      resultData,
+      status,
+      notes,
+      resultDate,
+      patientId,
+      performedBy,
+    } = req.body;
+
+    const resolvedTestId = testId || `TEST-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const resolvedPatientId = Number(patientId);
+    let patientIdValue = !Number.isNaN(resolvedPatientId) ? resolvedPatientId : undefined;
+    if (!patientIdValue) {
+      const patient = await prisma.patient.findUnique({ where: { patientCode: String(patientId) } });
+      patientIdValue = patient?.id ?? 1;
+    }
+
+    // Prefer the authenticated user's staffId; fall back to provided `performedBy` code
+    let staffId = 1;
+    const currentStaffCode = (req as any).user?.staffId || performedBy;
+    if (currentStaffCode) {
+      const staff = await prisma.staff.findUnique({ where: { staffCode: String(currentStaffCode) } });
+      if (staff) {
+        staffId = staff.id;
+      }
+    }
 
     const labTest = await prisma.labTest.create({
       data: {
-        testId,
+        testId: resolvedTestId,
         testName,
-        testCategory,
+        testCategory: testCategory || 'General',
         resultData: JSON.stringify(resultData),
-        status,
+        status: status || 'PENDING',
         notes,
         resultDate: resultDate ? new Date(resultDate) : new Date(),
-        patientId: 1, // TODO: Get from request context
-        staffId: 1,   // TODO: Get from request context
+        patientId: patientIdValue,
+        staffId,
       },
     });
 

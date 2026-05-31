@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { getBackendUrl } from '../utils/backend';
 
 export interface HospitalUpdate {
   eventType: 'BILLING_RECORD_UPDATED' | 'LAB_TEST_UPDATED';
@@ -28,11 +29,15 @@ export const useHospitalUpdates = (options: UseHospitalUpdatesOptions = {}) => {
     if (!enabled) return;
 
     // Initialize socket connection
-    const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
+    const backendUrl = getBackendUrl();
     socketRef.current = io(backendUrl, {
+      path: '/socket.io',
+      transports: ['polling', 'websocket'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: 10,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: Infinity,
+      timeout: 20000,
     });
 
     // Connection handlers
@@ -44,6 +49,29 @@ export const useHospitalUpdates = (options: UseHospitalUpdatesOptions = {}) => {
       if (autoJoinUpdates && socketRef.current) {
         socketRef.current.emit('join-updates');
       }
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.warn('[Socket.io] Hospital updates connect_error:', error);
+      setIsConnected(false);
+    });
+
+    socketRef.current.on('connect_timeout', () => {
+      console.warn('[Socket.io] Hospital updates connection timed out');
+      setIsConnected(false);
+    });
+
+    socketRef.current.on('reconnect_attempt', (attempt) => {
+      console.debug(`[Socket.io] hospital updates reconnect attempt ${attempt}`);
+    });
+
+    socketRef.current.on('reconnect_error', (error) => {
+      console.warn('[Socket.io] Hospital updates reconnect error:', error);
+    });
+
+    socketRef.current.on('reconnect', () => {
+      console.log('[Socket.io] Hospital updates reconnected');
+      setIsConnected(true);
     });
 
     socketRef.current.on('disconnect', () => {

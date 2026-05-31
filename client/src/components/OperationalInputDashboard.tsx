@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NurseStationTab } from './tabs/NurseStationTab';
 import { LabTechTab } from './tabs/LabTechTab';
 import { PharmacyTab } from './tabs/PharmacyTab';
+import { authFetch } from '../utils/api';
 
 type TabType = 'nurse' | 'lab' | 'pharmacy';
 
@@ -18,9 +19,13 @@ export const OperationalInputDashboard: React.FC = () => {
   const fetchStaffData = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/staff');
-      const data = await response.json();
-      setStaffList(data);
+      const response = await authFetch('/api/staff');
+      if (response.ok) {
+        const data = await response.json();
+        setStaffList(data);
+      } else {
+        console.error('Failed to fetch staff data:', response.statusText);
+      }
     } catch (error) {
       console.error('Failed to fetch staff data:', error);
     } finally {

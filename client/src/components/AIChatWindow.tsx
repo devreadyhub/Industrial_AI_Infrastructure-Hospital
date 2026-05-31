@@ -3,11 +3,11 @@ import { io, Socket } from 'socket.io-client';
 import { useAIChatContext } from '../hooks/useAIChatContext';
 import { useHospitalUpdates } from '../hooks/useHospitalUpdates';
 import { VoiceController, speakText } from './VoiceController';
-
-const getAIApiUrl = (path: string) => {
-  const backendUrl = (import.meta as any)?.env?.VITE_API_URL?.replace(/\/$/, '');
-  return backendUrl ? `${backendUrl}${path}` : path;
-};
+import { AIChatLogin } from './AIChatLogin';
+import { authFetch } from '../utils/api';
+import { getAIApiUrl, getBackendUrl } from '../utils/backend';
+import { useAuth } from '../contexts/AuthContext';
+import { LogOut } from 'lucide-react';
 
 interface ChatResponsePayload {
   answer?: string;
@@ -18,42 +18,101 @@ interface ChatResponsePayload {
 export const AIChatWindow: React.FC = () => {
   const { messages, addMessage, contextSummary } = useAIChatContext();
   const { isConnected, latestUpdate } = useHospitalUpdates();
+  const { user, isAuthenticated: authIsAuthenticated, logout } = useAuth();
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [chatConnected, setChatConnected] = useState(false);
+  const [backendUrl, setBackendUrl] = useState<string>('');
   const [aiError, setAiError] = useState<string | null>(null);
+  const [ollamaHealth, setOllamaHealth] = useState<{
+    available: boolean;
+    baseUrl?: string;
+    model?: string;
+    forceOffline?: boolean;
+    circuitOpen?: boolean;
+  } | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
+  // Setup socket connection only when authenticated
   useEffect(() => {
-    const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
-    const userRole = localStorage.getItem('userRole') || 'visitor';
-    const userId = localStorage.getItem('userId');
+    if (!authIsAuthenticated) return;
+
+    const backendUrl = getBackendUrl();
+    setBackendUrl(backendUrl);
+    const userRole = user?.role || localStorage.getItem('userRole') || 'staff';
+    const rawUserId = user?.staffId ?? user?.id ?? localStorage.getItem('userId') ?? '';
+    const userId = String(rawUserId);
+    const token = localStorage.getItem('authToken');
 
     socketRef.current = io(backendUrl, {
+      path: '/socket.io',
+      transports: ['polling', 'websocket'],
       auth: {
         userRole,
         userId,
+        token,
       },
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: 10,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: Infinity,
+      timeout: 20000,
     });
 
     socketRef.current.on('connect', () => {
       setChatConnected(true);
+      setAiError(null);
+      console.debug('[Socket.io] AI chat connected');
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      setChatConnected(false);
+      console.error('Socket failed to connect:', error);
+      if (error instanceof Error) {
+        setAiError(`Chat socket connection failed: ${error.message}`);
+      }
+    });
+
+    socketRef.current.on('connect_timeout', () => {
+      setChatConnected(false);
+      console.warn('Socket connection timed out.');
+    });
+
+    socketRef.current.on('reconnect_attempt', (attempt) => {
+      console.debug(`[Socket.io] reconnect attempt ${attempt}`);
+    });
+
+    socketRef.current.on('reconnect_error', (error) => {
+      console.warn('Socket reconnect error:', error);
+    });
+
+    socketRef.current.on('reconnect', (attempt) => {
+      console.debug(`[Socket.io] reconnected after ${attempt} attempt(s)`);
+      setChatConnected(true);
+    });
+
+    socketRef.current.on('reconnect_failed', () => {
+      setChatConnected(false);
+      console.warn('Socket reconnect failed.');
     });
 
     socketRef.current.on('disconnect', () => {
       setChatConnected(false);
     });
 
-    socketRef.current.on('chat-response', (payload: ChatResponsePayload) => {
+    socketRef.current.on('chat-response', async (payload: ChatResponsePayload) => {
+      const answer = payload.answer || payload.message || 'No answer received.';
       addMessage({
         role: 'assistant',
-        content: payload.answer || payload.message || 'No answer received.',
+        content: answer,
         timestamp: new Date().toISOString(),
       });
       setIsLoading(false);
+      try {
+        await speakText(answer);
+      } catch (speakError) {
+        console.warn('Speech synthesis failed for socket response:', speakError);
+      }
     });
 
     socketRef.current.on('chat-error', (payload: ChatResponsePayload) => {
@@ -68,7 +127,78 @@ export const AIChatWindow: React.FC = () => {
     return () => {
       socketRef.current?.disconnect();
     };
-  }, [addMessage]);
+  }, [authIsAuthenticated, addMessage]);
+
+  const checkOllamaHealth = useCallback(async (backendUrl: string) => {
+    try {
+      const response = await authFetch(`${backendUrl}/api/ai/ollama-health`);
+      const text = await response.text();
+      let data: any = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+
+      if (response.ok && data?.status) {
+        setOllamaHealth({
+          available: data.status.available,
+          baseUrl: data.status.baseUrl,
+          model: data.status.model,
+          forceOffline: data.status.forceOffline,
+          circuitOpen: data.status.circuitOpen,
+        });
+      } else {
+        setOllamaHealth({
+          available: false,
+          baseUrl: data?.status?.baseUrl || backendUrl,
+          model: data?.status?.model,
+        });
+      }
+    } catch (error) {
+      setOllamaHealth({
+        available: false,
+        baseUrl: backendUrl,
+        model: undefined,
+      });
+      console.warn('Ollama health check failed:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authIsAuthenticated || !backendUrl) {
+      return;
+    }
+
+    void checkOllamaHealth(backendUrl);
+    const interval = window.setInterval(() => void checkOllamaHealth(backendUrl), 30000);
+    return () => window.clearInterval(interval);
+  }, [backendUrl, authIsAuthenticated, checkOllamaHealth]);
+
+  const handleLoginSuccess = (_token: string, loggedInUser: any) => {
+    setAiError(null);
+    addMessage({
+      role: 'system',
+      content: `Welcome ${loggedInUser.name}! You are now connected as a ${loggedInUser.role}. Ask away!`,
+      timestamp: new Date().toISOString(),
+    });
+  };
+
+  const handleLogout = () => {
+    logout();
+    localStorage.removeItem('aiChatUser');
+    setChatConnected(false);
+    socketRef.current?.disconnect();
+  };
+
+  const reconnectChat = useCallback(() => {
+    if (socketRef.current) {
+      setAiError('Attempting to reconnect chat socket...');
+      socketRef.current.connect();
+    } else {
+      setAiError('Chat socket is not initialized yet. Please refresh or log out and log back in.');
+    }
+  }, []);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,12 +223,11 @@ export const AIChatWindow: React.FC = () => {
     }
 
     try {
-      const response = await fetch(getAIApiUrl('/api/ai/chat'), {
+      const response = await authFetch(getAIApiUrl('/api/ai/chat'), {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'x-user-role': localStorage.getItem('userRole') || 'visitor',
-          'x-user-id': localStorage.getItem('userId') || '',
+          'x-user-role': user?.role || localStorage.getItem('userRole') || 'staff',
+          'x-user-id': String(user?.staffId ?? user?.id ?? localStorage.getItem('userId') ?? ''),
         },
         body: JSON.stringify({
           question: userInput,
@@ -117,28 +246,21 @@ export const AIChatWindow: React.FC = () => {
       if (response.ok) {
         const answer = data?.answer || data?.message || 'No answer was returned from the AI service.';
         setAiError(null);
-        addMessage({
-          role: 'assistant',
-          content: answer,
-          timestamp: new Date().toISOString(),
-        });
+        addMessage({ role: 'assistant', content: answer, timestamp: new Date().toISOString() });
+        try {
+          await speakText(answer);
+        } catch (speakError) {
+          console.warn('Speech synthesis failed for HTTP response:', speakError);
+        }
       } else {
         const errorMessage = data?.message || data?.error || response.statusText || 'Failed to get response';
         setAiError(errorMessage);
-        addMessage({
-          role: 'assistant',
-          content: `Error: ${errorMessage}`,
-          timestamp: new Date().toISOString(),
-        });
+        addMessage({ role: 'assistant', content: `Error: ${errorMessage}`, timestamp: new Date().toISOString() });
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       setAiError(errMsg);
-      addMessage({
-        role: 'assistant',
-        content: `Error: ${errMsg}`,
-        timestamp: new Date().toISOString(),
-      });
+      addMessage({ role: 'assistant', content: `Error: ${errMsg}`, timestamp: new Date().toISOString() });
     } finally {
       setIsLoading(false);
       setUserInput('');
@@ -164,17 +286,13 @@ export const AIChatWindow: React.FC = () => {
     }
 
     try {
-      const response = await fetch(getAIApiUrl('/api/ai/chat'), {
+      const response = await authFetch(getAIApiUrl('/api/ai/chat'), {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'x-user-role': localStorage.getItem('userRole') || 'visitor',
-          'x-user-id': localStorage.getItem('userId') || '',
+          'x-user-role': user?.role || localStorage.getItem('userRole') || 'staff',
+          'x-user-id': String(user?.staffId ?? user?.id ?? localStorage.getItem('userId') ?? ''),
         },
-        body: JSON.stringify({
-          question: transcribedText,
-          context: contextSummary,
-        }),
+        body: JSON.stringify({ question: transcribedText, context: contextSummary }),
       });
 
       const responseText = await response.text();
@@ -187,29 +305,17 @@ export const AIChatWindow: React.FC = () => {
 
       if (response.ok) {
         const answer = data?.answer || data?.message || 'No answer was returned from the AI service.';
-        addMessage({
-          role: 'assistant',
-          content: answer,
-          timestamp: new Date().toISOString(),
-        });
+        addMessage({ role: 'assistant', content: answer, timestamp: new Date().toISOString() });
         try {
           await speakText(answer);
         } catch (speakError) {
           console.warn('TTS failed:', speakError);
         }
       } else {
-        addMessage({
-          role: 'assistant',
-          content: `Error: ${data?.message || data?.error || response.statusText || 'Failed to get response'}`,
-          timestamp: new Date().toISOString(),
-        });
+        addMessage({ role: 'assistant', content: `Error: ${data?.message || data?.error || response.statusText || 'Failed to get response'}`, timestamp: new Date().toISOString() });
       }
     } catch (error) {
-      addMessage({
-        role: 'assistant',
-        content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: new Date().toISOString(),
-      });
+      addMessage({ role: 'assistant', content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`, timestamp: new Date().toISOString() });
     } finally {
       setIsLoading(false);
     }
@@ -223,31 +329,73 @@ export const AIChatWindow: React.FC = () => {
     });
   }, [addMessage]);
 
+  // Show login screen if not authenticated
+  if (!authIsAuthenticated) {
+    return (
+      <div className="flex h-full flex-col bg-gray-100 p-4 items-center justify-center">
+        <AIChatLogin onLoginSuccess={handleLoginSuccess} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col bg-gray-100 p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Hospital AI Assistant</h1>
           <p className="text-sm text-gray-600">Real-time chat connected to local Ollama and the hospital database.</p>
+          {user && (
+            <p className="text-xs text-gray-500 mt-1">
+              Logged in as: <span className="font-semibold">{user.name}</span> ({user.role})
+            </p>
+          )}
         </div>
-        <div className="space-y-1 text-right text-xs text-gray-600">
-          <div>
-            Chat socket: <span className={chatConnected ? 'text-green-600' : 'text-red-600'}>{chatConnected ? 'Connected' : 'Disconnected'}</span>
+        <div className="flex flex-col items-end gap-3">
+          <div className="space-y-1 text-right text-xs text-gray-600">
+            <div>
+              Chat socket: <span className={chatConnected ? 'text-green-600' : 'text-red-600'}>{chatConnected ? 'Connected' : 'Disconnected'}</span>
+            </div>
+            <div>
+              Backend URL: <span className="font-mono text-indigo-700">{backendUrl || 'unknown'}</span>
+            </div>
+            <div>
+              Ollama: <span className={ollamaHealth?.available ? 'text-green-600' : 'text-red-600'}>{ollamaHealth ? (ollamaHealth.available ? `Available (${ollamaHealth.model || 'model'})` : `Unavailable at ${ollamaHealth.baseUrl || 'unknown'}`) : 'Checking...'}</span>
+            </div>
+            <div>
+              Updates: <span className={isConnected ? 'text-green-600' : 'text-red-600'}>{isConnected ? 'Connected' : 'Disconnected'}</span>
+            </div>
           </div>
-          <div>
-            Updates: <span className={isConnected ? 'text-green-600' : 'text-red-600'}>{isConnected ? 'Connected' : 'Disconnected'}</span>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition"
+          >
+            <LogOut size={16} />
+            Logout
+          </button>
         </div>
       </div>
 
-      {(aiError || !chatConnected) && (
-        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+      {(aiError || !chatConnected || (ollamaHealth && !ollamaHealth.available)) && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4  text-sm text-red-900">
           <p className="font-semibold">AI service warning</p>
           <p>
             {aiError
               ? `Error: ${aiError}`
-              : 'Socket disconnected. The chat will continue using HTTP fallback, but backend availability may be degraded.'}
+              : !chatConnected
+              ? 'Socket disconnected. The chat will continue using HTTP fallback, but backend availability may be degraded.'
+              : ollamaHealth && !ollamaHealth.available
+              ? `Local Ollama is unavailable at ${ollamaHealth.baseUrl || 'unknown'}. AI responses may be degraded until the service is back online.`
+              : 'Degraded AI service state detected.'}
           </p>
+          {!chatConnected && (
+            <button
+              type="button"
+              onClick={reconnectChat}
+              className="mt-3 inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+            >
+              Reconnect chat
+            </button>
+          )}
         </div>
       )}
 

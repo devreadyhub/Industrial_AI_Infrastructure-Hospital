@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from '../contexts/AuthContext';
+import { getBackendUrl } from '../utils/backend';
 
 export interface EmergencyPayload {
   incidentType: string;
@@ -22,8 +23,10 @@ export const useEmergencyAlerts = () => {
   useEffect(() => {
     if (!user) return;
 
-    const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
+    const backendUrl = getBackendUrl();
     const socket = io(`${backendUrl}/emergency`, {
+      path: '/socket.io',
+      transports: ['polling', 'websocket'],
       auth: {
         userRole: user.role,
         userId: user.id,

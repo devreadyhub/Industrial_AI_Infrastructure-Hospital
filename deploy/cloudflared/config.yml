@@ -1,0 +1,25 @@
+tunnel: 323a16bc-df80-470d-86d4-16255f584ad3
+credentials-file: /home/enike22/.cloudflared/323a16bc-df80-470d-86d4-16255f584ad3.json
+
+ingress:
+  - hostname: cloud.devready.ng
+    service: http://localhost:8080
+  - hostname: hospital1000.devready.ng
+    path: /api/*
+    service: http://localhost:4000
+  - hostname: hospital1000.devready.ng
+    path: /socket.io*
+    service: http://localhost:4000
+  - hostname: hospital1000.devready.ng
+    path: /socket.io
+    service: http://localhost:4000
+  - hostname: hospital1000.devready.ng
+    path: /socket.io/*
+    service: http://localhost:4000
+  - hostname: hospital1000.devready.ng
+    service: http://localhost:3001
+  - hostname: devready.ng
+    service: http://localhost:3000
+  - hostname: www.devready.ng
+    service: http://localhost:3000
+  - service: http_status:404

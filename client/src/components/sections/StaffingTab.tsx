@@ -1,16 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { staffingSchema, StaffingFormData } from '../../schemas/validation';
 import { Input, Select, Button, Alert } from '../common/FormComponents';
-import { useUpdateStaffStatus, useStaffDirectory } from '../../hooks/useApi';
+import { useUpdateStaffStatus, useStaffDirectory, useCreateStaff } from '../../hooks/useApi';
 import { Loader, Search } from 'lucide-react';
+import RefreshIcon from '../icons/RefreshIcon';
 
 export const StaffingTab: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const { mutate: updateStatus, isPending, isSuccess, isError } = useUpdateStaffStatus();
+  const { mutate: updateStatus, isPending: isUpdating } = useUpdateStaffStatus();
+  const { mutate: createStaff, isPending: isCreating } = useCreateStaff();
   const { data: staffData, isLoading: isLoadingData } = useStaffDirectory();
 
   const {
@@ -18,6 +22,7 @@ export const StaffingTab: React.FC = () => {
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<StaffingFormData>({
     resolver: zodResolver(staffingSchema),
@@ -27,24 +32,221 @@ export const StaffingTab: React.FC = () => {
       staffStatus: 'On-duty',
       seniority: 'Mid-level',
       shiftAssignment: 'Morning (6AM-2PM)',
-      department: '',
+      department: 'Emergency',
+      role: 'Doctor',
+      email: '',
+      phone: '',
+      dateOfBirth: '',
+      gender: 'Other',
+      bloodType: 'O+',
+      specialization: '',
+      yearsOfExperience: 0,
+      assignedWardId: '',
+      onCallStatus: 'Available',
+      nextScheduledShift: '',
+      emergencyContactName: '',
+      emergencyContactPhone: '',
+      backgroundCheckDate: '',
+      trainingExpiryDate: '',
+      licenseNumber: '',
+      certifications: '',
+      currentLocation: '',
     },
   });
 
   const onSubmit = (data: StaffingFormData) => {
-    updateStatus(data, {
-      onSuccess: () => {
-        reset();
-        setEditingId(null);
-      },
-    });
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    
+    if (editingId) {
+      // Update existing staff - include original ID in case it was changed in the form
+      updateStatus({ ...data, originalId: editingId }, {
+        onSuccess: () => {
+          setSuccessMessage('Staff updated successfully');
+          reset({
+            staffId: generateStaffCode(),
+            staffName: '',
+            staffStatus: 'On-duty',
+            seniority: 'Mid-level',
+            shiftAssignment: 'Morning (6AM-2PM)',
+            department: 'Emergency',
+            role: 'Doctor',
+            email: '',
+            phone: '',
+            dateOfBirth: '',
+            gender: 'Other',
+            bloodType: 'O+',
+            specialization: '',
+            yearsOfExperience: 0,
+            assignedWardId: '',
+            onCallStatus: 'Available',
+            nextScheduledShift: '',
+            emergencyContactName: '',
+            emergencyContactPhone: '',
+            backgroundCheckDate: '',
+            trainingExpiryDate: '',
+            licenseNumber: '',
+            certifications: '',
+            currentLocation: '',
+          });
+          setEditingId(null);
+          setSearchTerm('');
+          setTimeout(() => setSuccessMessage(null), 3000);
+        },
+        onError: (error: any) => {
+          const message = error.response?.data?.message || error.response?.data?.error || 'Failed to update staff';
+          setErrorMessage(message);
+          console.error('Update failed:', message);
+        },
+      });
+    } else {
+      // Create new staff
+      createStaff(data, {
+        onSuccess: () => {
+          setSuccessMessage('Staff added successfully');
+          reset({
+            staffId: generateStaffCode(),
+            staffName: '',
+            staffStatus: 'On-duty',
+            seniority: 'Mid-level',
+            shiftAssignment: 'Morning (6AM-2PM)',
+            department: 'Emergency',
+            role: 'Doctor',
+            email: '',
+            phone: '',
+            dateOfBirth: '',
+            gender: 'Other',
+            bloodType: 'O+',
+            specialization: '',
+            yearsOfExperience: 0,
+            assignedWardId: '',
+            onCallStatus: 'Available',
+            nextScheduledShift: '',
+            emergencyContactName: '',
+            emergencyContactPhone: '',
+            backgroundCheckDate: '',
+            trainingExpiryDate: '',
+            licenseNumber: '',
+            certifications: '',
+            currentLocation: '',
+          });
+          setSearchTerm('');
+          setTimeout(() => setSuccessMessage(null), 3000);
+        },
+        onError: (error: any) => {
+          let message = 'Failed to add staff';
+          
+          // Try to extract error message from various sources
+          if (error.response?.data?.message) {
+            message = error.response.data.message;
+          } else if (error.response?.data?.error) {
+            message = error.response.data.error;
+          } else if (error.response?.status === 400) {
+            message = `Bad Request: Check that all fields are properly filled (${error.response?.data?.message || 'invalid data'})`;
+          } else if (error.response?.status === 409) {
+            message = 'A staff member with that ID already exists';
+          } else if (error.message) {
+            message = `Error: ${error.message}`;
+          }
+          
+          setErrorMessage(message);
+          console.error('Create failed:', message, 'Full error:', error);
+        },
+      });
+    }
   };
+
+  const departments = [
+    'Emergency',
+    'ICU',
+    'Outpatient',
+    'Pharmacy',
+    'Radiology',
+    'Laboratory',
+    'Administration',
+    'Support Services',
+  ];
+
+  const generateStaffCode = () => `STF-${Math.floor(1000 + Math.random() * 9000)}`;
+
+  const watchedDepartment = watch('department');
+  const watchedStaffId = watch('staffId');
+
+  useEffect(() => {
+    if (watchedDepartment && !watchedStaffId) {
+      setValue('staffId', generateStaffCode());
+    }
+  }, [watchedDepartment, watchedStaffId, setValue]);
+
+  // Populate form when entering edit mode
+  useEffect(() => {
+    if (editingId && staffData) {
+      const s = staffData.find((st: any) => st.staffId === editingId);
+      if (s) {
+        setValue('staffId', s.staffId);
+        setValue('staffName', s.staffName);
+        setValue('department', s.department);
+        setValue('staffStatus', s.staffStatus);
+        setValue('seniority', s.seniority);
+        setValue('shiftAssignment', s.shiftAssignment);
+        setValue('role', s.role || 'Doctor');
+        setValue('email', s.email || '');
+        setValue('phone', s.phone || '');
+        setValue('dateOfBirth', s.dateOfBirth || '');
+        setValue('gender', s.gender || 'Other');
+        setValue('bloodType', s.bloodType || 'O+');
+        setValue('specialization', s.specialization || '');
+        setValue('yearsOfExperience', s.yearsOfExperience ?? 0);
+        setValue('assignedWardId', s.assignedWardId || '');
+        setValue('onCallStatus', s.onCallStatus || 'Available');
+        setValue('nextScheduledShift', s.nextScheduledShift || '');
+        setValue('emergencyContactName', s.emergencyContactName || '');
+        setValue('emergencyContactPhone', s.emergencyContactPhone || '');
+        setValue('backgroundCheckDate', s.backgroundCheckDate || '');
+        setValue('trainingExpiryDate', s.trainingExpiryDate || '');
+        setValue('licenseNumber', s.licenseNumber || '');
+        setValue('certifications', s.certifications || '');
+        setValue('currentLocation', s.currentLocation || '');
+      }
+    } else if (!editingId) {
+      // Reset form when exiting edit mode
+      reset({
+        staffId: generateStaffCode(),
+        staffName: '',
+        staffStatus: 'On-duty',
+        seniority: 'Mid-level',
+        shiftAssignment: 'Morning (6AM-2PM)',
+        department: 'Emergency',
+        role: 'Doctor',
+        email: '',
+        phone: '',
+        dateOfBirth: '',
+        gender: 'Other',
+        bloodType: 'O+',
+        specialization: '',
+        yearsOfExperience: 0,
+        assignedWardId: '',
+        onCallStatus: 'Available',
+        nextScheduledShift: '',
+        emergencyContactName: '',
+        emergencyContactPhone: '',
+        backgroundCheckDate: '',
+        trainingExpiryDate: '',
+        licenseNumber: '',
+        certifications: '',
+        currentLocation: '',
+      });
+    }
+  }, [editingId, staffData, setValue, reset]);
 
   const filteredStaff = staffData?.filter(
     (staff: any) =>
       staff.staffName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       staff.staffId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      staff.department.toLowerCase().includes(searchTerm.toLowerCase())
+      staff.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      staff.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      staff.specialization?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      staff.assignedWardId?.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
   const statusColors = {
@@ -67,10 +269,10 @@ export const StaffingTab: React.FC = () => {
         <p className="text-gray-600">Manage staff status, shifts, and assignments</p>
       </div>
 
-      {isSuccess && (
-        <Alert type="success" message="Staff status updated successfully" />
+      {successMessage && (
+        <Alert type="success" message={successMessage} />
       )}
-      {isError && <Alert type="error" message="Failed to update staff status" />}
+      {errorMessage && <Alert type="error" message={errorMessage} />}
 
       {/* Update Staff Form */}
       <div className="bg-white rounded-lg shadow-md p-6">
@@ -78,108 +280,343 @@ export const StaffingTab: React.FC = () => {
           {editingId ? 'Update Staff' : 'Add/Update Staff'}
         </h3>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Controller
-              name="staffId"
-              control={control}
-              render={({ field }) => (
-                <Input
-                  {...field}
-                  label="Staff ID"
-                  placeholder="STF-0001"
-                  required
-                  error={errors.staffId}
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-gray-200 p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Staff Information</h4>
+              <div className="grid grid-cols-1 gap-4">
+                <Controller
+                  name="staffId"
+                  control={control}
+                  render={({ field }) => (
+                    <div className="space-y-2">
+                      <Input
+                        {...field}
+                        label="Staff ID"
+                        placeholder="STF-0001"
+                        required
+                        error={errors.staffId}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setValue('staffId', generateStaffCode())}
+                        className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-blue-600 bg-blue-100 hover:bg-blue-200 transition-colors"
+                      >
+                        <RefreshIcon className="w-4 h-4" />
+                        Generate staff ID
+                      </button>
+                    </div>
+                  )}
                 />
-              )}
-            />
 
-            <Controller
-              name="staffName"
-              control={control}
-              render={({ field }) => (
-                <Input
-                  {...field}
-                  label="Staff Name"
-                  placeholder="Dr. Smith"
-                  required
-                  error={errors.staffName}
+                <Controller
+                  name="staffName"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Staff Name"
+                      placeholder="Dr. Smith"
+                      required
+                      error={errors.staffName}
+                    />
+                  )}
                 />
-              )}
-            />
 
-            <Controller
-              name="department"
-              control={control}
-              render={({ field }) => (
-                <Input
-                  {...field}
-                  label="Department"
-                  placeholder="Emergency, ICU, etc."
-                  required
-                  error={errors.department}
+                <Controller
+                  name="role"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Role"
+                      placeholder="Doctor, Nurse, Technician"
+                      error={errors.role}
+                    />
+                  )}
                 />
-              )}
-            />
 
-            <Controller
-              name="staffStatus"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  {...field}
-                  label="Status"
-                  required
-                  options={[
-                    { value: 'On-duty', label: 'On-duty' },
-                    { value: 'Off-duty', label: 'Off-duty' },
-                    { value: 'On-break', label: 'On-break' },
-                  ]}
-                  error={errors.staffStatus}
+                <Controller
+                  name="department"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      label="Department"
+                      required
+                      options={departments.map((department) => ({
+                        value: department,
+                        label: department,
+                      }))}
+                      error={errors.department}
+                    />
+                  )}
                 />
-              )}
-            />
 
-            <Controller
-              name="seniority"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  {...field}
-                  label="Seniority Level"
-                  required
-                  options={[
-                    { value: 'Junior', label: 'Junior' },
-                    { value: 'Mid-level', label: 'Mid-level' },
-                    { value: 'Senior', label: 'Senior' },
-                    { value: 'Lead', label: 'Lead' },
-                  ]}
-                  error={errors.seniority}
+                <Controller
+                  name="email"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      type="email"
+                      label="Email"
+                      placeholder="staff@example.com"
+                      error={errors.email}
+                    />
+                  )}
                 />
-              )}
-            />
 
-            <Controller
-              name="shiftAssignment"
-              control={control}
-              render={({ field }) => (
-                <Select
-                  {...field}
-                  label="Shift Assignment"
-                  required
-                  options={[
-                    { value: 'Morning (6AM-2PM)', label: 'Morning (6AM-2PM)' },
-                    { value: 'Afternoon (2PM-10PM)', label: 'Afternoon (2PM-10PM)' },
-                    { value: 'Night (10PM-6AM)', label: 'Night (10PM-6AM)' },
-                  ]}
-                  error={errors.shiftAssignment}
+                <Controller
+                  name="phone"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Phone"
+                      placeholder="1234567890"
+                      error={errors.phone}
+                    />
+                  )}
                 />
-              )}
-            />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-200 p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Clinical & Credentials</h4>
+              <div className="grid grid-cols-1 gap-4">
+                <Controller
+                  name="dateOfBirth"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      type="date"
+                      label="Date of Birth"
+                      error={errors.dateOfBirth}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="gender"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      label="Gender"
+                      options={[
+                        { value: 'Male', label: 'Male' },
+                        { value: 'Female', label: 'Female' },
+                        { value: 'Other', label: 'Other' },
+                      ]}
+                      error={errors.gender}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="bloodType"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      label="Blood Type"
+                      options={[
+                        { value: 'O+', label: 'O+' },
+                        { value: 'O-', label: 'O-' },
+                        { value: 'A+', label: 'A+' },
+                        { value: 'A-', label: 'A-' },
+                        { value: 'B+', label: 'B+' },
+                        { value: 'B-', label: 'B-' },
+                        { value: 'AB+', label: 'AB+' },
+                        { value: 'AB-', label: 'AB-' },
+                      ]}
+                      error={errors.bloodType}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="specialization"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Specialization"
+                      placeholder="Emergency Medicine, ICU, Radiology"
+                      error={errors.specialization}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="yearsOfExperience"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      type="number"
+                      label="Years of Experience"
+                      placeholder="10"
+                      min={0}
+                      error={errors.yearsOfExperience}
+                    />
+                  )}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-gray-200 p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Assignment & Availability</h4>
+              <div className="grid grid-cols-1 gap-4">
+                <Controller
+                  name="assignedWardId"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Assigned Ward"
+                      placeholder="Ward 3"
+                      error={errors.assignedWardId}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="onCallStatus"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      {...field}
+                      label="On-call Status"
+                      options={[
+                        { value: 'Available', label: 'Available' },
+                        { value: 'On-call', label: 'On-call' },
+                        { value: 'Standby', label: 'Standby' },
+                        { value: 'Off-call', label: 'Off-call' },
+                      ]}
+                      error={errors.onCallStatus}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="nextScheduledShift"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      type="datetime-local"
+                      label="Next Scheduled Shift"
+                      error={errors.nextScheduledShift}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="currentLocation"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Current Location"
+                      placeholder="Ward 3 / ICU"
+                      error={errors.currentLocation}
+                    />
+                  )}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-200 p-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">Emergency & Compliance</h4>
+              <div className="grid grid-cols-1 gap-4">
+                <Controller
+                  name="emergencyContactName"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Emergency Contact Name"
+                      placeholder="Jane Doe"
+                      error={errors.emergencyContactName}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="emergencyContactPhone"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Emergency Contact Phone"
+                      placeholder="1234567890"
+                      error={errors.emergencyContactPhone}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="backgroundCheckDate"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      type="date"
+                      label="Background Check Date"
+                      error={errors.backgroundCheckDate}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="trainingExpiryDate"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      type="date"
+                      label="Training Expiry Date"
+                      error={errors.trainingExpiryDate}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="licenseNumber"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="License Number"
+                      placeholder="LIC-123456"
+                      error={errors.licenseNumber}
+                    />
+                  )}
+                />
+
+                <Controller
+                  name="certifications"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      {...field}
+                      label="Certifications"
+                      placeholder="ACLS, BLS, PALS"
+                      error={errors.certifications}
+                    />
+                  )}
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex gap-3 pt-4">
-            <Button type="submit" isLoading={isPending}>
+            <Button type="submit" isLoading={isUpdating || isCreating}>
               {editingId ? 'Update Staff' : 'Add Staff'}
             </Button>
             {editingId && (
@@ -190,7 +627,7 @@ export const StaffingTab: React.FC = () => {
                   reset();
                   setEditingId(null);
                 }}
-                disabled={isPending}
+                disabled={isUpdating || isCreating}
               >
                 Cancel
               </Button>
@@ -233,7 +670,7 @@ export const StaffingTab: React.FC = () => {
                     <p className="text-xs text-gray-500 mt-1">{staff.department}</p>
                   </div>
 
-                  <div className="space-y-2 mb-4">
+                  <div className="space-y-2 mb-4 text-sm text-gray-600">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">Status:</span>
                       <span
@@ -253,6 +690,18 @@ export const StaffingTab: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-600">Shift:</span>
                       <span className="text-xs font-medium text-gray-900">{staff.shiftAssignment}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Specialization:</span>
+                      <span className="text-xs font-medium text-gray-900">{staff.specialization || 'General'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Ward:</span>
+                      <span className="text-xs font-medium text-gray-900">{staff.assignedWardId || 'Unassigned'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">On-call:</span>
+                      <span className="text-xs font-medium text-gray-900">{staff.onCallStatus || 'Available'}</span>
                     </div>
                   </div>
 

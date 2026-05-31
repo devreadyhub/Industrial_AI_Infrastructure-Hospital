@@ -2,36 +2,76 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HTTPServer } from 'http';
 import { runHospitalAgentQueryWithAudit } from './langchainAgentService';
 import { normalizeAIUserRole, isSensitiveQuery } from './aiSecurity';
+import * as jwt from 'jsonwebtoken';
+
+const JWT_SECRET: jwt.Secret = process.env.JWT_SECRET || 'hospital-secret-key';
 
 let io: SocketIOServer | null = null;
 
 export interface GlobalHospitalUpdate {
-  eventType: 'BILLING_RECORD_UPDATED' | 'LAB_TEST_UPDATED';
+  eventType: 'BILLING_RECORD_UPDATED' | 'LAB_TEST_UPDATED' | 'PATIENT_ADMITTED';
   timestamp: string;
   data: Record<string, any>;
   updatedBy?: string;
 }
 
 interface SocketAIUser {
-  id?: number;
+  id?: number | string;
   role: 'visitor' | 'staff' | 'admin';
 }
 
 export const initializeSocketIO = (httpServer: HTTPServer): SocketIOServer => {
   io = new SocketIOServer(httpServer, {
+    path: '/socket.io',
     cors: {
-      origin: '*',
+      origin: true,
       methods: ['GET', 'POST'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-user-role', 'x-user-id'],
+      credentials: true,
+    },
+    pingInterval: 25000,
+    pingTimeout: 20000,
+    maxHttpBufferSize: 1000000,
+    perMessageDeflate: {
+      threshold: 1024,
     },
   });
 
   io.on('connection', (socket: Socket) => {
-    const rawUserRole = socket.handshake.auth?.userRole;
-    const rawUserId = socket.handshake.auth?.userId;
-    const user: SocketAIUser = {
-      role: normalizeAIUserRole(rawUserRole),
-      id: rawUserId ? Number(rawUserId) : undefined,
-    };
+    // Optional JWT handshake verification: if a token is provided, validate it and use claims.
+    const token = socket.handshake.auth?.token as string | undefined;
+    let user: SocketAIUser = { role: 'visitor' };
+
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        const rawHandshakeUserId = socket.handshake.auth?.userId;
+        // Preserve raw userId (string) when it cannot be coerced to a number
+        const parsedId = decoded?.staffId ? Number(decoded.staffId) : rawHandshakeUserId ? Number(rawHandshakeUserId) : undefined;
+        user = {
+          role: normalizeAIUserRole(decoded.role || socket.handshake.auth?.userRole),
+          id: Number.isFinite(parsedId) ? parsedId : (decoded?.staffId ?? rawHandshakeUserId),
+        } as SocketAIUser;
+      } catch (err) {
+        console.warn('[Socket.io] JWT verification failed for socket connection:', err instanceof Error ? err.message : err);
+        // Fall back to explicit handshake values if token verification fails
+        const rawUserRole = socket.handshake.auth?.userRole;
+        const rawUserId = socket.handshake.auth?.userId;
+        const parsedId = rawUserId ? Number(rawUserId) : undefined;
+        user = {
+          role: normalizeAIUserRole(rawUserRole),
+          id: Number.isFinite(parsedId) ? parsedId : rawUserId,
+        } as SocketAIUser;
+      }
+    } else {
+      const rawUserRole = socket.handshake.auth?.userRole;
+      const rawUserId = socket.handshake.auth?.userId;
+      const parsedId = rawUserId ? Number(rawUserId) : undefined;
+      user = {
+        role: normalizeAIUserRole(rawUserRole),
+        id: Number.isFinite(parsedId) ? parsedId : rawUserId,
+      } as SocketAIUser;
+    }
 
     socket.data.user = user;
 
@@ -65,7 +105,8 @@ export const initializeSocketIO = (httpServer: HTTPServer): SocketIOServer => {
       }
 
       try {
-        const { answer } = await runHospitalAgentQueryWithAudit(payload.question, user.role, payload.context);
+        const metadata = { userId: user.id, socketId: socket.id };
+        const { answer } = await runHospitalAgentQueryWithAudit(payload.question, user.role, payload.context, metadata);
         socket.emit('chat-response', { answer });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error during AI chat.';

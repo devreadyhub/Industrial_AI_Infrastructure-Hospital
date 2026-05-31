@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { LabResultSchema } from '../../schemas/validation';
+import RefreshIcon from '../icons/RefreshIcon';
+import { authFetch } from '../../utils/api';
 
 export const LabTechTab: React.FC = () => {
   const [jsonInput, setJsonInput] = useState('{}');
@@ -25,6 +27,13 @@ export const LabTechTab: React.FC = () => {
         return newErrors;
       });
     }
+  };
+
+  const generateTestId = () => {
+    setFormData((prev) => ({
+      ...prev,
+      testId: `LAB-${Date.now().toString().slice(-5)}`,
+    }));
   };
 
   const validateJson = (json: string) => {
@@ -61,9 +70,8 @@ export const LabTechTab: React.FC = () => {
         resultData: JSON.parse(jsonInput),
       });
 
-      const response = await fetch('/api/lab-tests', {
+      const response = await authFetch('/api/lab-tests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validatedData),
       });
 
@@ -109,15 +117,25 @@ export const LabTechTab: React.FC = () => {
           {/* Test ID */}
           <div>
             <label className="block text-sm font-semibold text-slate-200 mb-2">Test ID *</label>
+          <div className="flex gap-2">
             <input
               type="text"
               name="testId"
               value={formData.testId}
               onChange={handleFormChange}
-              className="w-full px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="e.g., LAB-2024-001"
             />
-            {errors.testId && <p className="text-red-400 text-sm mt-1">{errors.testId}</p>}
+            <button
+              type="button"
+              onClick={generateTestId}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              <RefreshIcon className="w-4 h-4" />
+              Generate
+            </button>
+          </div>
+          {errors.testId && <p className="text-red-400 text-sm mt-1">{errors.testId}</p>}
           </div>
 
           {/* Test Name */}

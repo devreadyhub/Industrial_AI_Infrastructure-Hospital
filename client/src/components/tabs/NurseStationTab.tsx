@@ -1,18 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { z } from 'zod';
 import { NurseStationSchema } from '../../schemas/validation';
+import { authFetch } from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface NurseStationTabProps {
   staffList: any[];
 }
 
 export const NurseStationTab: React.FC<NurseStationTabProps> = ({ staffList }) => {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     ward: 'ICU',
-    admittedBy: '',
+    admittedBy: user?.staffId || '',
     patientName: '',
-    triageLevel: 'MEDIUM',
+    triageLevel: 'Non-urgent',
     admissionNotes: '',
+    contactNumber: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState(false);
@@ -21,9 +25,8 @@ export const NurseStationTab: React.FC<NurseStationTabProps> = ({ staffList }) =
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: name === 'admittedBy' ? (value ? parseInt(value) : '') : value,
+      [name]: value,
     }));
-    // Clear error for this field
     if (errors[name]) {
       setErrors((prev) => {
         const newErrors = { ...prev };
@@ -33,31 +36,40 @@ export const NurseStationTab: React.FC<NurseStationTabProps> = ({ staffList }) =
     }
   };
 
+  useEffect(() => {
+    if (user?.staffId) {
+      setFormData((prev) => ({
+        ...prev,
+        admittedBy: user.staffId,
+      }));
+    }
+  }, [user?.staffId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
     setSuccess(false);
 
     try {
-      // Validate using Zod
       const validatedData = NurseStationSchema.parse(formData);
 
-      // Send to API
-      const response = await fetch('/api/patients/admit', {
+      const response = await authFetch('/api/patients/admit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validatedData),
       });
 
-      if (!response.ok) throw new Error('Failed to submit admission');
+      if (!response.ok) {
+        throw new Error('Failed to submit admission');
+      }
 
       setSuccess(true);
       setFormData({
         ward: 'ICU',
         admittedBy: '',
         patientName: '',
-        triageLevel: 'MEDIUM',
+        triageLevel: 'Non-urgent',
         admissionNotes: '',
+        contactNumber: '',
       });
 
       setTimeout(() => setSuccess(false), 5000);
@@ -117,23 +129,43 @@ export const NurseStationTab: React.FC<NurseStationTabProps> = ({ staffList }) =
           {errors.patientName && <p className="text-red-400 text-sm mt-1">{errors.patientName}</p>}
         </div>
 
-        {/* Admitted By - Validates against Staff ID */}
+        {user?.staffId ? (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <p className="text-sm font-medium text-blue-900">Admitted by</p>
+            <p className="text-lg font-semibold text-blue-800">{user.staffId}</p>
+            <p className="text-sm text-blue-700">Auto-filled from your authenticated account</p>
+          </div>
+        ) : (
+          <div>
+            <label className="block text-sm font-semibold text-slate-200 mb-2">Admitted By (Staff ID)</label>
+            <select
+              name="admittedBy"
+              value={formData.admittedBy}
+              onChange={handleChange}
+              className="w-full px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Select Staff Member --</option>
+              {staffList.map((staff) => (
+                <option key={staff.staffCode || staff.id} value={staff.staffCode || staff.id}>
+                  {staff.staffCode || staff.id} - {staff.firstName} {staff.lastName}
+                </option>
+              ))}
+            </select>
+            {errors.admittedBy && <p className="text-red-400 text-sm mt-1">{errors.admittedBy}</p>}
+          </div>
+        )}
+
         <div>
-          <label className="block text-sm font-semibold text-slate-200 mb-2">Admitted By (Staff ID) *</label>
-          <select
-            name="admittedBy"
-            value={formData.admittedBy}
+          <label className="block text-sm font-semibold text-slate-200 mb-2">Contact Number</label>
+          <input
+            type="tel"
+            name="contactNumber"
+            value={formData.contactNumber}
             onChange={handleChange}
             className="w-full px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">-- Select Staff Member --</option>
-            {staffList.map((staff) => (
-              <option key={staff.id} value={staff.id}>
-                {staff.id} - {staff.firstName} {staff.lastName}
-              </option>
-            ))}
-          </select>
-          {errors.admittedBy && <p className="text-red-400 text-sm mt-1">{errors.admittedBy}</p>}
+            placeholder="Optional contact number"
+          />
+          {errors.contactNumber && <p className="text-red-400 text-sm mt-1">{errors.contactNumber}</p>}
         </div>
 
         {/* Triage Level */}
@@ -145,11 +177,9 @@ export const NurseStationTab: React.FC<NurseStationTabProps> = ({ staffList }) =
             onChange={handleChange}
             className="w-full px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="CRITICAL">🔴 CRITICAL</option>
-            <option value="HIGH">🟠 HIGH</option>
-            <option value="MEDIUM">🟡 MEDIUM</option>
-            <option value="LOW">🟢 LOW</option>
-            <option value="NON_URGENT">⚪ NON_URGENT</option>
+            <option value="Emergency">Emergency</option>
+            <option value="Urgent">Urgent</option>
+            <option value="Non-urgent">Non-urgent</option>
           </select>
         </div>
 

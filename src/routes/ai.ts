@@ -7,6 +7,7 @@ import {
   handleRefreshVectorStore,
   handleTranscription,
   handleTTS,
+  handleOllamaHealth,
 } from '../controllers/aiController';
 import { auditAIInteractionMiddleware } from '../middleware/auditMiddleware';
 import { authenticateAIUser, protectRoute } from '../middleware/authMiddleware';
@@ -32,12 +33,13 @@ const upload = multer({
 
 // Apply authentication and audit middleware to all AI routes
 router.use(authenticateAIUser);
-router.use(protectRoute(1));
+router.use(protectRoute(0)); // Allow all authenticated users (clearanceLevel >= 0)
 router.use(auditAIInteractionMiddleware);
 
 router.post('/sql-query', handleSqlQuery);
 router.post('/agent-query', handleAgentQuery);
 router.post('/chat', handleChatQuery);
+router.get('/ollama-health', handleOllamaHealth);
 router.post('/refresh-vector-store', handleRefreshVectorStore);
 router.post('/transcribe', upload.single('audio'), handleTranscription);
 router.post('/tts', handleTTS);

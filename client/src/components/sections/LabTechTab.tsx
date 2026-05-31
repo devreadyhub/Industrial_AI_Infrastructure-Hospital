@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { labTechSchema, LabTechFormData } from '../../schemas/validation';
 import { Input, TextArea, Button, Alert } from '../common/FormComponents';
 import { useSubmitLabTest, useLabTests } from '../../hooks/useApi';
 import { Loader } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 
 export const LabTechTab: React.FC = () => {
   const [jsonError, setJsonError] = useState<string>('');
+  const { user } = useAuth();
   const { mutate: submitTest, isPending, isSuccess, isError } = useSubmitLabTest();
   const { data: labTests, isLoading: isLoadingData } = useLabTests();
 
@@ -16,6 +18,7 @@ export const LabTechTab: React.FC = () => {
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<LabTechFormData>({
     resolver: zodResolver(labTechSchema),
@@ -24,7 +27,6 @@ export const LabTechTab: React.FC = () => {
       testName: '',
       testResults: '{}',
       testDate: new Date().toISOString().slice(0, 16),
-      performedBy: 'STF-0001',
     },
   });
 
@@ -129,19 +131,13 @@ export const LabTechTab: React.FC = () => {
               )}
             />
 
-            <Controller
-              name="performedBy"
-              control={control}
-              render={({ field }) => (
-                <Input
-                  {...field}
-                  label="Performed By (Staff ID)"
-                  placeholder="STF-0001"
-                  required
-                  error={errors.performedBy}
-                />
-              )}
-            />
+            {user?.staffId ? (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                <p className="text-sm font-medium text-blue-900">Performed by</p>
+                <p className="text-lg font-semibold text-blue-800">{user.staffId}</p>
+                <p className="text-sm text-blue-700">Auto-filled from your authenticated account</p>
+              </div>
+            ) : null}
           </div>
 
           <Controller

@@ -5,40 +5,88 @@ import { emitBillingRecordUpdate } from '../services/hospitalEventEmitter';
 const prisma = new PrismaClient();
 const router = Router();
 
-// Record pharmacy sale
+// Return current pharmacy inventory
+router.get('/', async (_req: Request, res: Response) => {
+  try {
+    const inventory = await prisma.pharmacy.findMany({
+      orderBy: { updatedAt: 'desc' },
+    });
+    res.json(inventory);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch pharmacy inventory' });
+  }
+});
+
+// Record pharmacy sale or stock update
 router.post('/sales', async (req: Request, res: Response) => {
   try {
-    const { drugName, quantity, salePrice, saleDate } = req.body;
+    const {
+      drugName,
+      drugCode,
+      quantity = 0,
+      salePrice,
+      saleDate,
+      stockAdded = 0,
+      expiryDate,
+      batchNumber,
+      supplier,
+    } = req.body;
 
-    // Find or create pharmacy entry
-    let pharmacy = await prisma.pharmacy.findFirst({ where: { drugName } });
+    if (!drugName || !drugCode) {
+      return res.status(400).json({ error: 'Drug name and code are required' });
+    }
+
+    let pharmacy = await prisma.pharmacy.findUnique({ where: { drugCode } });
+
+    const nextExpiryDate = expiryDate ? new Date(expiryDate) : undefined;
+    const nextUnitPrice = salePrice !== undefined ? Number(salePrice) : undefined;
+
     if (!pharmacy) {
       pharmacy = await prisma.pharmacy.create({
         data: {
           drugName,
-          drugCode: drugName.toUpperCase().replace(/ /g, '_'),
-          stock: 1000,
+          drugCode,
+          stock: Math.max(Number(stockAdded) - Number(quantity), 0),
           minStockLevel: 100,
           maxStockLevel: 5000,
-          expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-          unitPrice: new Prisma.Decimal(salePrice),
+          expiryDate: nextExpiryDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+          unitPrice: Number(nextUnitPrice || 0),
+        },
+      });
+    } else {
+      const updatedStock = pharmacy.stock + Number(stockAdded) - Number(quantity);
+      pharmacy = await prisma.pharmacy.update({
+        where: { drugCode },
+        data: {
+          drugName,
+          stock: Math.max(updatedStock, 0),
+          expiryDate: nextExpiryDate || pharmacy.expiryDate,
+          unitPrice: nextUnitPrice !== undefined ? Number(nextUnitPrice) : pharmacy.unitPrice,
         },
       });
     }
 
-    // Record sale
-    const sale = await prisma.pharmacySales.create({
-      data: {
-        pharmacyId: pharmacy.id,
-        quantity,
-        salePrice: new Prisma.Decimal(salePrice),
-        saleDate: new Date(saleDate),
-      },
-    });
+    let sale = null;
+    if (Number(quantity) > 0) {
+      sale = await prisma.pharmacySales.create({
+        data: {
+          pharmacyId: pharmacy.id,
+          quantity: Number(quantity),
+          salePrice: Number(salePrice || pharmacy.unitPrice),
+          saleDate: saleDate ? new Date(saleDate) : new Date(),
+        },
+      });
+    }
 
-    res.json({ success: true, saleId: sale.id });
+    res.json({
+      success: true,
+      inventory: pharmacy,
+      saleId: sale?.id || null,
+      batchNumber,
+      supplier,
+    });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to record sale' });
+    res.status(500).json({ error: 'Failed to record sale or update inventory' });
   }
 });
 
@@ -51,9 +99,9 @@ router.post('/billing', async (req: Request, res: Response) => {
       data: {
         patientId,
         invoiceNumber,
-        totalAmount: new Prisma.Decimal(totalAmount),
-        amountCovered: new Prisma.Decimal(amountCovered || 0),
-        amountDue: new Prisma.Decimal(amountDue),
+        totalAmount: Number(totalAmount),
+        amountCovered: Number(amountCovered || 0),
+        amountDue: Number(amountDue),
         paymentStatus,
         dueDate: new Date(dueDate),
         notes,
@@ -79,7 +127,7 @@ router.put('/billing/:id', async (req: Request, res: Response) => {
       where: { id: parseInt(id) },
       data: {
         paymentStatus,
-        amountCovered: amountCovered !== undefined ? new Prisma.Decimal(amountCovered) : undefined,
+        amountCovered: amountCovered !== undefined ? Number(amountCovered) : undefined,
         paidDate: paidDate ? new Date(paidDate) : undefined,
         notes,
       },

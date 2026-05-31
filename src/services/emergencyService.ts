@@ -101,7 +101,7 @@ export class EmergencyService {
         certifications: {
           has: 'ACLS',
         },
-        shiftStatus: 'ON_DUTY',
+        shiftAssignment: 'ON_DUTY',
       },
       select: {
         id: true,
@@ -140,13 +140,14 @@ export class EmergencyService {
     return actions;
   }
 
-  static async resolveEmergency(emergencyId: number, actionsTaken: string, resolvedByStaffId: number): Promise<void> {
+  static async resolveEmergency(emergencyId: number, actionsTaken: string, resolvedByStaffId?: number): Promise<void> {
     await prisma.emergency.update({
       where: { id: emergencyId },
       data: {
         status: 'RESOLVED',
         actionsTaken,
         resolvedAt: new Date(),
+        staffId: resolvedByStaffId,
       },
     });
 

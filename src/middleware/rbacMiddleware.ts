@@ -24,17 +24,41 @@ export const ROLE_LEVELS: Record<UserRole, number> = {
  * Map old roles to new RBAC roles for backward compatibility
  */
 export const normalizeToRBACRole = (role: string): UserRole => {
-  const roleMap: Record<string, UserRole> = {
-    visitor: UserRole.RECEPTION,
-    staff: UserRole.CLINICAL,
-    admin: UserRole.ADMIN,
-    reception: UserRole.RECEPTION,
-    pharmacy: UserRole.PHARMACY,
-    clinical: UserRole.CLINICAL,
-    doctor: UserRole.DOCTOR,
-  };
+  const normalized = (role || 'visitor').trim().toLowerCase();
 
-  return roleMap[role.toLowerCase()] || UserRole.RECEPTION;
+  if (
+    normalized.includes('admin') ||
+    normalized.includes('administrator') ||
+    normalized.includes('system admin') ||
+    normalized.includes('chief')
+  ) {
+    return UserRole.ADMIN;
+  }
+
+  if (normalized.includes('doctor')) {
+    return UserRole.DOCTOR;
+  }
+
+  if (normalized.includes('pharmacy')) {
+    return UserRole.PHARMACY;
+  }
+
+  if (normalized.includes('reception') || normalized === 'visitor' || normalized === 'guest') {
+    return UserRole.RECEPTION;
+  }
+
+  if (
+    normalized.includes('clinical') ||
+    normalized.includes('nurse') ||
+    normalized.includes('technician') ||
+    normalized.includes('staff') ||
+    normalized.includes('practitioner') ||
+    normalized.includes('medical')
+  ) {
+    return UserRole.CLINICAL;
+  }
+
+  return UserRole.RECEPTION;
 };
 
 /**
@@ -59,11 +83,14 @@ export const applyRBAC = (req: RBACRequest, res: Response, next: NextFunction) =
     return res.status(401).json({ message: 'User not authenticated' });
   }
 
-  const rbacRole = normalizeToRBACRole(req.user.role);
+  const rbacRole = normalizeToRBACRole(req.user.role as string);
   const level = ROLE_LEVELS[rbacRole];
 
+  // Normalize identifier: prefer `staffId` from authentication payload but expose as `id` for RBAC consumers
+  const originalId = (req.user as any).staffId || (req.user as any).id || undefined;
+
   req.user = {
-    ...req.user,
+    id: originalId,
     role: rbacRole,
     level,
   };

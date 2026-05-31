@@ -3,13 +3,14 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============ PATIENTS ============
 model Patient {
   id             Int         @id @default(autoincrement())
+  patientCode    String      @unique
   firstName      String
   lastName       String
   email          String?     @unique
@@ -42,32 +43,51 @@ enum TriageLevel {
 
 // ============ STAFF ============
 model Staff {
-  id            Int         @id @default(autoincrement())
-  firstName     String
-  lastName      String
-  email         String?     @unique
-  phone         String?
-  role          String // Doctor, Nurse, Technician, etc.
-  seniority     Seniority
-  shiftStatus   ShiftStatus
-  department    String?
-  licenseNumber String?     @unique
-  certifications String[] // e.g., ["ACLS", "BLS", "PALS"]
-  currentLocation String? // Current ward or location
+  id                    Int       @id @default(autoincrement())
+  staffCode             String    @unique
+  firstName             String
+  lastName              String
+  email                 String?   @unique
+  passwordHash          String?
+  isAdmin               Boolean   @default(false)
+  clearanceLevel        Int       @default(1)
+  phone                 String?
+  role                  String // Doctor, Nurse, Technician, etc.
+  seniority             Seniority
+  currentStatus         String    @default("On-duty")
+  shiftAssignment       String?
+  department            String?
+  licenseNumber         String?   @unique
+  certifications        String[] // e.g., ["ACLS", "BLS", "PALS"]
+  currentLocation       String? // Current ward or location
+  dateOfBirth           DateTime?
+  gender                String?
+  bloodType             String?
+  specialization        String?
+  yearsOfExperience     Int?
+  assignedWardId        String?
+  onCallStatus          String?
+  nextScheduledShift    DateTime?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  backgroundCheckDate   DateTime?
+  trainingExpiryDate    DateTime?
 
   // Relations
-  facilityAssignments Facility[]
-  labTestsPerformed   LabTest[]
-  prescriptions       Prescription[]
-  triggeredEmergencies Emergency[] @relation("EmergencyTrigger")
-  emergencyResponses  StaffEmergency[]
+  facilityAssignments  Facility[]
+  labTestsPerformed    LabTest[]
+  prescriptions        Prescription[]
+  triggeredEmergencies Emergency[]      @relation("EmergencyTrigger")
+  emergencyResponses   StaffEmergency[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  Visitor   Visitor[]
 }
 
 enum Seniority {
   JUNIOR
+  MID_LEVEL
   SENIOR
   LEAD
   CONSULTANT
@@ -217,7 +237,7 @@ model BillingRecord {
   invoiceNumber     String        @unique
   insuranceProvider String?
   totalAmount       Float
-  amountCovered     Float       @default(0)
+  amountCovered     Float         @default(0)
   amountDue         Float
   paymentStatus     PaymentStatus
   paymentMethod     String? // Credit Card, Insurance, Cash, etc.
@@ -239,21 +259,25 @@ enum PaymentStatus {
 
 // ============ VISITOR MANAGEMENT ============
 model Visitor {
-  id            Int           @id @default(autoincrement())
-  firstName     String
-  lastName      String
-  phone         String?
-  email         String?
-  relationship  String // Family, Friend, Legal, etc.
-  patient       Patient       @relation(fields: [patientId], references: [id])
-  patientId     Int
-  ward          Ward          @relation(fields: [wardId], references: [id])
-  wardId        Int
-  checkInTime   DateTime      @default(now())
-  checkOutTime  DateTime?
-  purpose       String?       @db.Text // Reason for visit
-  checkedInBy   String // Security staff name/ID
-  status        VisitorStatus @default(ACTIVE)
+  id           Int           @id @default(autoincrement())
+  visitorCode  String        @unique
+  firstName    String
+  lastName     String
+  phone        String?
+  email        String?
+  relationship String // Family, Friend, Legal, etc.
+  patient      Patient?      @relation(fields: [patientId], references: [id])
+  patientId    Int?
+  staff        Staff?        @relation(fields: [staffId], references: [id])
+  staffId      Int?
+  ward         Ward?         @relation(fields: [wardId], references: [id])
+  wardId       Int?
+  checkInTime  DateTime      @default(now())
+  checkOutTime DateTime?
+  expiresAt    DateTime?
+  purpose      String?       @db.Text // Reason for visit
+  checkedInBy  String // Security staff name/ID
+  status       VisitorStatus @default(ACTIVE)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -267,23 +291,23 @@ enum VisitorStatus {
 
 // ============ AUDIT LOGS ============
 model AuditLog {
-  id              Int                  @id @default(autoincrement())
-  interactionType String               // 'ai_query', 'sql_query', 'vector_search', etc.
-  actionType      String?              // e.g. SENSITIVE_QUERY, TAB_ACCESS, DATA_MODIFICATION
+  id              Int               @id @default(autoincrement())
+  interactionType String // 'ai_query', 'sql_query', 'vector_search', etc.
+  actionType      String? // e.g. SENSITIVE_QUERY, TAB_ACCESS, DATA_MODIFICATION
   userPrompt      String
-  systemResponse  String?              @db.Text
+  systemResponse  String?           @db.Text
   sqlGenerated    String?
   vectorQuery     String?
-  rawOutput       String               @db.Text
-  finalOutput     String               @db.Text
-  accessStatus    AuditAccessStatus    @default(SUCCESS)
+  rawOutput       String            @db.Text
+  finalOutput     String            @db.Text
+  accessStatus    AuditAccessStatus @default(SUCCESS)
   status          AuditStatus
   errorMessage    String?
   userId          Int?
   userRole        String?
   ipAddress       String?
   userAgent       String?
-  metadata        String?                // Additional context like path, method, etc.
+  metadata        String? // Additional context like path, method, etc.
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -303,18 +327,18 @@ enum AuditAccessStatus {
 
 // ============ EMERGENCY DISPATCH ============
 model Emergency {
-  id            Int             @id @default(autoincrement())
-  incidentType  String // "Code Blue", "Fire", "Active Shooter", etc.
-  location      String // Ward, room, or area
-  priority      EmergencyPriority
-  status        EmergencyStatus @default(ACTIVE)
-  description   String?         @db.Text
-  triggeredBy   Staff?          @relation("EmergencyTrigger", fields: [staffId], references: [id])
-  staffId       Int?
-  patientId     Int? // If patient-specific
-  responders    StaffEmergency[]
-  actionsTaken  String?         @db.Text
-  resolvedAt    DateTime?
+  id           Int               @id @default(autoincrement())
+  incidentType String // "Code Blue", "Fire", "Active Shooter", etc.
+  location     String // Ward, room, or area
+  priority     EmergencyPriority
+  status       EmergencyStatus   @default(ACTIVE)
+  description  String?           @db.Text
+  triggeredBy  Staff?            @relation("EmergencyTrigger", fields: [staffId], references: [id])
+  staffId      Int?
+  patientId    Int? // If patient-specific
+  responders   StaffEmergency[]
+  actionsTaken String?           @db.Text
+  resolvedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

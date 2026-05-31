@@ -1,4 +1,24 @@
 import { PrismaClient } from '@prisma/client';
+import { AuditLogger } from './AuditLogger';
+
+export const logAuditEvent = async (payload: AuditLogPayload) => {
+  return AuditLogger.log({
+    interactionType: payload.interactionType,
+    actionType: payload.actionType || 'UNKNOWN',
+    rawPrompt: payload.userPrompt,
+    systemResponse: payload.finalOutput,
+    status: payload.status,
+    errorMessage: payload.errorMessage,
+    userId: payload.userId,
+    userRole: payload.userRole,
+    ipAddress: payload.ipAddress,
+    userAgent: payload.userAgent,
+    metadata: payload.metadata,
+    sqlGenerated: payload.sqlGenerated,
+    vectorQuery: payload.vectorQuery,
+    accessStatus: 'SUCCESS',
+  });
+};
 
 const databaseUrl = process.env.DATABASE_URL || '';
 let prisma: PrismaClient | null = null;
@@ -17,6 +37,7 @@ const getPrisma = (): PrismaClient | null => {
 
 export interface AuditLogPayload {
   interactionType: 'SQL_QUERY' | 'AGENT_QUERY' | 'VECTOR_SEARCH' | string;
+  actionType?: 'SENSITIVE_QUERY' | 'TAB_ACCESS' | 'DATA_MODIFICATION' | string;
   userPrompt: string;
   sqlGenerated?: string;
   vectorQuery?: string;
@@ -28,6 +49,8 @@ export interface AuditLogPayload {
   userRole?: string;
   ipAddress?: string;
   userAgent?: string;
+  systemResponse?: string;
+  accessStatus?: 'SUCCESS' | 'DENIED_BY_PRIVACY_FILTER' | 'BREAK_GLASS_OVERRIDE';
   metadata?: Record<string, any>;
 }
 
@@ -56,7 +79,7 @@ export const logAIInteraction = async (payload: AuditLogPayload): Promise<void> 
         userRole: payload.userRole,
         ipAddress: payload.ipAddress,
         userAgent: payload.userAgent,
-        metadata: payload.metadata ?? undefined,
+        metadata: payload.metadata ? JSON.stringify(payload.metadata) : undefined,
       },
     });
 

@@ -1,19 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { UserPlus, UserMinus, Users, Search } from 'lucide-react';
+import RefreshIcon from './icons/RefreshIcon';
+import { authFetch } from '../utils/api';
 
 interface Visitor {
   id: number;
+  visitorCode: string;
   firstName: string;
   lastName: string;
   phone?: string;
   email?: string;
   relationship: string;
-  patientId: number;
-  patientName: string;
-  wardId: number;
-  wardName: string;
+  patientId?: number;
+  staffId?: number;
+  targetType: 'patient' | 'staff';
+  targetName: string;
+  targetCode?: string;
+  wardId?: number;
+  wardName?: string;
   checkInTime: string;
   checkOutTime?: string;
+  expiresAt?: string;
   purpose?: string;
   checkedInBy: string;
   status: 'ACTIVE' | 'CHECKED_OUT' | 'ARCHIVED';
@@ -21,61 +28,107 @@ interface Visitor {
 
 interface Patient {
   id: number;
+  patientCode: string;
   firstName: string;
   lastName: string;
   ward: {
     id: number;
     wardName: string;
   };
+  wardNumber?: number;
+}
+
+interface StaffMember {
+  id: number;
+  staffCode: string;
+  firstName: string;
+  lastName: string;
+  department?: string;
+  assignedWardId?: number | null;
 }
 
 export const VisitorManagement: React.FC = () => {
   const [visitors, setVisitors] = useState<Visitor[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [visitTargetSearch, setVisitTargetSearch] = useState('');
   const [showCheckInForm, setShowCheckInForm] = useState(false);
   const [loading, setLoading] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
+    visitorCode: '',
     firstName: '',
     lastName: '',
     phone: '',
     email: '',
     relationship: '',
-    patientId: '',
+    visitType: 'patient' as 'patient' | 'staff',
+    targetId: '',
     purpose: '',
     checkedInBy: 'Security Staff',
   });
 
+  const generateVisitorCode = () => {
+    const code = `VIS-${Math.floor(1000 + Math.random() * 9000)}`;
+    setFormData(prev => ({ ...prev, visitorCode: code }));
+  };
+
   useEffect(() => {
     loadVisitors();
     loadPatients();
+    loadStaff();
   }, []);
 
   const loadVisitors = async () => {
     try {
-      const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
-      const response = await fetch(`${backendUrl}/api/visitors`);
+      const backendUrl = getBackendUrl();
+      const response = await authFetch(`${backendUrl}/api/visitors`);
       if (response.ok) {
         const data = await response.json();
-        setVisitors(data);
+        setVisitors(data.map((visitor: any) => ({
+          ...visitor,
+          wardNumber: parseWardNumber(visitor.wardName),
+        })));
       }
     } catch (error) {
       console.error('Failed to load visitors:', error);
     }
   };
 
+  const parseWardNumber = (wardName?: string): number | undefined => {
+    if (!wardName) return undefined;
+    const match = wardName.match(/\d+/);
+    return match ? Number(match[0]) : undefined;
+  };
+
   const loadPatients = async () => {
     try {
-      const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
-      const response = await fetch(`${backendUrl}/api/patients`);
+      const backendUrl = getBackendUrl();
+      const response = await authFetch(`${backendUrl}/api/patients`);
       if (response.ok) {
         const data = await response.json();
-        setPatients(data);
+        setPatients(data.map((patient: any) => ({
+          ...patient,
+          wardNumber: parseWardNumber(patient.ward?.wardName),
+        })));
       }
     } catch (error) {
       console.error('Failed to load patients:', error);
+    }
+  };
+
+  const loadStaff = async () => {
+    try {
+      const backendUrl = getBackendUrl();
+      const response = await authFetch(`${backendUrl}/api/visitors/staff`);
+      if (response.ok) {
+        const data = await response.json();
+        setStaffList(data);
+      }
+    } catch (error) {
+      console.error('Failed to load staff members:', error);
     }
   };
 
@@ -83,29 +136,52 @@ export const VisitorManagement: React.FC = () => {
     e.preventDefault();
     setLoading(true);
 
+    if (!formData.targetId) {
+      window.alert(`Please select a ${formData.visitType === 'patient' ? 'patient' : 'staff'} from the search results before checking in.`);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
-      const response = await fetch(`${backendUrl}/api/visitors/check-in`, {
+      const backendUrl = getBackendUrl();
+      const payload: Record<string, unknown> = {
+        visitorCode: formData.visitorCode,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        phone: formData.phone,
+        email: formData.email,
+        relationship: formData.relationship,
+        purpose: formData.purpose,
+        checkedInBy: formData.checkedInBy,
+      };
+
+      if (formData.visitType === 'patient') {
+        payload.patientId = formData.targetId;
+      } else {
+        payload.staffId = formData.targetId;
+      }
+
+      const response = await authFetch(`${backendUrl}/api/visitors/check-in`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
       if (response.ok) {
         await loadVisitors();
         setShowCheckInForm(false);
         setFormData({
+          visitorCode: '',
           firstName: '',
           lastName: '',
           phone: '',
           email: '',
           relationship: '',
-          patientId: '',
+          visitType: 'patient',
+          targetId: '',
           purpose: '',
           checkedInBy: 'Security Staff',
         });
+        setVisitTargetSearch('');
       } else {
         console.error('Failed to check in visitor');
       }
@@ -118,8 +194,8 @@ export const VisitorManagement: React.FC = () => {
 
   const handleCheckOut = async (visitorId: number) => {
     try {
-      const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
-      const response = await fetch(`${backendUrl}/api/visitors/${visitorId}/check-out`, {
+      const backendUrl = getBackendUrl();
+      const response = await authFetch(`${backendUrl}/api/visitors/${visitorId}/check-out`, {
         method: 'POST',
       });
 
@@ -135,10 +211,19 @@ export const VisitorManagement: React.FC = () => {
     visitor.status === 'ACTIVE' &&
     (visitor.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
      visitor.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-     visitor.patientName.toLowerCase().includes(searchTerm.toLowerCase()))
+     visitor.targetName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const selectedPatient = patients.find(p => p.id.toString() === formData.patientId);
+  const selectedPatient = patients.find((p) => p.id.toString() === formData.targetId);
+  const selectedStaff = staffList.find((s) => s.id.toString() === formData.targetId);
+
+  const filteredTargets = (formData.visitType === 'patient' ? patients : staffList)
+    .filter((entity) => {
+      const text = formData.visitType === 'patient'
+        ? `${entity.patientCode} ${entity.firstName} ${entity.lastName}`
+        : `${entity.staffCode} ${entity.firstName} ${entity.lastName}`;
+      return text.toLowerCase().includes(visitTargetSearch.toLowerCase());
+    });
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -259,6 +344,29 @@ export const VisitorManagement: React.FC = () => {
                 />
               </div>
 
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Visitor ID</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={formData.visitorCode}
+                      placeholder="Generate visitor ID"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={generateVisitorCode}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700"
+                    >
+                      <RefreshIcon className="w-4 h-4" />
+                      Generate ID
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Relationship *</label>
                 <select
@@ -277,25 +385,68 @@ export const VisitorManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Patient *</label>
-                <select
-                  required
-                  value={formData.patientId}
-                  onChange={(e) => setFormData({...formData, patientId: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select patient</option>
-                  {patients.map(patient => (
-                    <option key={patient.id} value={patient.id}>
-                      {patient.firstName} {patient.lastName} - {patient.ward.wardName}
-                    </option>
-                  ))}
-                </select>
-                {selectedPatient && (
-                  <p className="text-sm text-gray-600 mt-1">
-                    Visiting: {selectedPatient.firstName} {selectedPatient.lastName} in {selectedPatient.ward.wardName}
-                  </p>
-                )}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Visiting target *</label>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Target type</label>
+                    <select
+                      required
+                      value={formData.visitType}
+                      onChange={(e) => setFormData({ ...formData, visitType: e.target.value as 'patient' | 'staff', targetId: '' })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="patient">Patient</option>
+                      <option value="staff">Staff</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Search by name or ID</label>
+                    <input
+                      type="text"
+                      value={visitTargetSearch}
+                      onChange={(e) => setVisitTargetSearch(e.target.value)}
+                      placeholder="Search target..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-md border border-gray-300 bg-white p-3">
+                    {filteredTargets.length > 0 ? (
+                      filteredTargets.slice(0, 8).map((entity) => (
+                        <button
+                          key={entity.id}
+                          type="button"
+                          onClick={() => {
+                            setFormData({ ...formData, targetId: entity.id.toString() });
+                            setVisitTargetSearch(formData.visitType === 'patient'
+                              ? `${entity.patientCode} — ${entity.firstName} ${entity.lastName}`
+                              : `${entity.staffCode} — ${entity.firstName} ${entity.lastName}`);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-md hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {formData.visitType === 'patient'
+                            ? `${entity.patientCode} — ${entity.firstName} ${entity.lastName} (${entity.ward.wardName}${entity.wardNumber ? ` • Ward ${entity.wardNumber}` : ''})`
+                            : `${entity.staffCode} — ${entity.firstName} ${entity.lastName}${entity.department ? ` (${entity.department})` : ''}`}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-sm text-gray-500">Type a name or ID to search available {formData.visitType === 'patient' ? 'patients' : 'staff'}.</p>
+                    )}
+                  </div>
+
+                  {(formData.visitType === 'patient' && selectedPatient) || (formData.visitType === 'staff' && selectedStaff) ? (
+                    <div className="text-sm text-gray-600">
+                      <p>
+                        Selected {formData.visitType}: {formData.visitType === 'patient' ? `${selectedPatient?.patientCode} — ${selectedPatient?.firstName} ${selectedPatient?.lastName}` : `${selectedStaff?.staffCode} — ${selectedStaff?.firstName} ${selectedStaff?.lastName}${selectedStaff?.department ? ` (${selectedStaff.department})` : ''}`}
+                      </p>
+                      {formData.visitType === 'patient' && selectedPatient ? (
+                        <p>Ward: {selectedPatient.ward.wardName}{selectedPatient.wardNumber ? ` • Ward ${selectedPatient.wardNumber}` : ''}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div>
@@ -319,7 +470,10 @@ export const VisitorManagement: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowCheckInForm(false)}
+                  onClick={() => {
+                    setShowCheckInForm(false);
+                    setVisitTargetSearch('');
+                  }}
                   className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400"
                 >
                   Cancel
@@ -349,8 +503,9 @@ export const VisitorManagement: React.FC = () => {
                       <h3 className="text-sm font-medium text-gray-900">
                         {visitor.firstName} {visitor.lastName}
                       </h3>
+                      <p className="text-sm text-gray-600">ID: {visitor.visitorCode}</p>
                       <p className="text-sm text-gray-600">
-                        Visiting: {visitor.patientName} in {visitor.wardName}
+                        Visiting {visitor.targetType === 'patient' ? 'patient' : 'staff'}: {visitor.targetName}{visitor.wardName ? ` in ${visitor.wardName}` : ''}
                       </p>
                       <p className="text-xs text-gray-500">
                         Relationship: {visitor.relationship} • Checked in: {new Date(visitor.checkInTime).toLocaleString()}

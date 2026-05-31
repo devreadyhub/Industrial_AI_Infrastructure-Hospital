@@ -5,9 +5,29 @@ import { Eye, EyeOff, Lock, Users, AlertCircle, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-interface LoginFormData {
+type NormalizedAuthRole = 'visitor' | 'staff' | 'admin';
+
+const normalizeAuthRole = (role: string | undefined): NormalizedAuthRole => {
+  const normalized = (role || 'visitor').trim().toLowerCase();
+  if (normalized.includes('admin')) return 'admin';
+  if (
+    normalized === 'staff' ||
+    normalized.includes('doctor') ||
+    normalized.includes('nurse') ||
+    normalized.includes('clinical') ||
+    normalized.includes('pharmacy') ||
+    normalized.includes('technician') ||
+    normalized.includes('system admin')
+  ) {
+    return 'staff';
+  }
+  return 'visitor';
+};
+
+interface AuthFormData {
   staffId: string;
   password: string;
+  confirmPassword?: string;
 }
 
 export const LandingPage: React.FC<{ onVisitorAccess: () => void }> = ({ onVisitorAccess }) => {
@@ -16,23 +36,30 @@ export const LandingPage: React.FC<{ onVisitorAccess: () => void }> = ({ onVisit
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [isSignUp, setIsSignUp] = useState(false);
 
   const {
     register,
     handleSubmit,
     formState: { errors },
     reset,
-  } = useForm<LoginFormData>({
+  } = useForm<AuthFormData>({
     mode: 'onBlur',
   });
 
-  const onSubmit = async (data: LoginFormData) => {
+  const onSubmit = async (data: AuthFormData) => {
     setIsLoading(true);
     setLoginError(null);
 
+    if (isSignUp && data.password !== data.confirmPassword) {
+      setLoginError('Passwords do not match.');
+      setIsLoading(false);
+      return;
+    }
+
     try {
-      // Simulate API call to authenticate staff
-      const response = await fetch('/api/auth/login', {
+      const apiUrl = `/api/auth/${isSignUp ? 'register' : 'login'}`;
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -41,41 +68,57 @@ export const LandingPage: React.FC<{ onVisitorAccess: () => void }> = ({ onVisit
         }),
       });
 
-      const responseText = await response.text();
-      const responseData = responseText ? JSON.parse(responseText) : null;
+      const contentType = response.headers.get('content-type') || '';
+      let responseData: any = null;
+      let responseText = '';
+
+      if (contentType.includes('application/json')) {
+        responseData = await response.json();
+      } else {
+        responseText = await response.text();
+      }
 
       if (!response.ok) {
+        const message = responseData?.message || responseText || `${isSignUp ? 'Sign up' : 'Login'} failed. Please check your credentials.`;
+        setLoginError(message);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!responseData) {
+        const htmlSnippet = responseText ? ` First 120 chars: ${responseText.slice(0, 120).replace(/\s+/g, ' ')}` : '';
         setLoginError(
-          responseData?.message || 'Login failed. Please check your credentials.',
+          responseText
+            ? `${isSignUp ? 'Sign up' : 'Login'} failed. Server returned HTML instead of JSON. This usually means /api/auth/${isSignUp ? 'register' : 'login'} is not reaching the backend.${htmlSnippet}`
+            : `${isSignUp ? 'Sign up' : 'Login'} failed. Invalid server response.`,
         );
         setIsLoading(false);
         return;
       }
 
-      const { token, user } = responseData || {};
+      const { token, user } = responseData;
 
       if (!token || !user) {
-        setLoginError('Login failed. Invalid server response.');
+        setLoginError(`${isSignUp ? 'Sign up' : 'Login'} failed. Invalid server response.`);
         setIsLoading(false);
         return;
       }
 
-      // Store token in localStorage
+      const normalizedRole = normalizeAuthRole(user.role);
+      const normalizedUser = { ...user, role: normalizedRole };
+
       localStorage.setItem('authToken', token);
       localStorage.setItem('tokenExpiry', Date.now() + 3600000); // 1 hour expiry
+      localStorage.setItem('userRole', normalizedRole);
+      localStorage.setItem('userId', normalizedUser.staffId || normalizedUser.id);
 
-      // Update auth context
-      login(user);
-
-      // Reset form
+      login(normalizedUser);
       reset();
-
-      // Stop loading and navigate to dashboard
       setIsLoading(false);
       navigate('/dashboard', { replace: true });
     } catch (error) {
       setLoginError(
-        error instanceof Error ? error.message : 'An error occurred during login. Please try again.',
+        error instanceof Error ? error.message : 'An error occurred during authentication. Please try again.',
       );
       setIsLoading(false);
     }
@@ -149,8 +192,12 @@ export const LandingPage: React.FC<{ onVisitorAccess: () => void }> = ({ onVisit
         >
           {/* Card Header */}
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-white mb-1">Staff Login</h2>
-            <p className="text-blue-100 text-sm">Enter your credentials to access the system</p>
+            <h2 className="text-2xl font-bold text-white mb-1">
+              {isSignUp ? 'Staff Sign Up' : 'Staff Login'}
+            </h2>
+            <p className="text-blue-100 text-sm">
+              {isSignUp ? 'Create your account using your staff ID.' : 'Enter your credentials to access the system'}
+            </p>
           </div>
 
           {/* Error Alert */}
@@ -224,14 +271,50 @@ export const LandingPage: React.FC<{ onVisitorAccess: () => void }> = ({ onVisit
               )}
             </div>
 
+            {isSignUp && (
+              <div>
+                <label className="block text-sm font-medium text-blue-100 mb-2">Confirm Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Confirm your password"
+                    {...register('confirmPassword', {
+                      required: isSignUp ? 'Please confirm your password' : false,
+                      minLength: isSignUp
+                        ? {
+                            value: 6,
+                            message: 'Password must be at least 6 characters',
+                          }
+                        : undefined,
+                    })}
+                    className={`w-full px-4 py-3 rounded-lg bg-white/10 border backdrop-blur transition-all focus:outline-none focus:ring-2 text-white placeholder-blue-200/50 ${
+                      errors.confirmPassword
+                        ? 'border-red-500/50 focus:ring-red-500/50'
+                        : 'border-white/20 focus:ring-blue-400/50 focus:border-blue-400/50'
+                    }`}
+                  />
+                </div>
+                {errors.confirmPassword && (
+                  <p className="text-red-400 text-xs mt-1">{errors.confirmPassword.message}</p>
+                )}
+              </div>
+            )}
+
             {/* Forgot Password Link */}
-            <div className="text-right">
+            <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => navigate('/admin-support')}
                 className="text-blue-300 hover:text-blue-100 text-xs font-medium transition"
               >
                 Forgot Password?
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsSignUp((prev) => !prev)}
+                className="text-white underline text-xs font-medium transition"
+              >
+                {isSignUp ? 'Already have an account? Login' : 'New here? Create an account'}
               </button>
             </div>
 
@@ -250,12 +333,12 @@ export const LandingPage: React.FC<{ onVisitorAccess: () => void }> = ({ onVisit
                     animate={{ rotate: 360 }}
                     transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                   />
-                  Authenticating...
+                  {isSignUp ? 'Signing up...' : 'Signing in...'}
                 </>
               ) : (
                 <>
                   <Lock className="w-5 h-5" />
-                  Sign In
+                  {isSignUp ? 'Sign Up' : 'Sign In'}
                 </>
               )}
             </motion.button>

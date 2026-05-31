@@ -287,7 +287,7 @@ const AuditHistoryTable: React.FC = () => {
                       {formatTimestamp(log.createdAt)}
                     </td>
                     <td className={`px-4 py-3 whitespace-nowrap font-medium ${isDenied ? 'text-red-700' : 'text-slate-900'}`}>
-                      {log.userId || '—'}
+                      {log.userId !== undefined ? log.userId : '—'}
                     </td>
                     <td className={`px-4 py-3 whitespace-nowrap ${isDenied ? 'text-red-700' : 'text-slate-600'}`}>
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-800">

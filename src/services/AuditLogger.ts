@@ -99,7 +99,7 @@ export class AuditLogger {
           vectorQuery: entry.vectorQuery,
           ipAddress: entry.ipAddress,
           userAgent: entry.userAgent,
-          metadata: entry.metadata ?? undefined,
+          metadata: entry.metadata ? JSON.stringify(entry.metadata) : undefined,
         },
       });
     } catch (error) {

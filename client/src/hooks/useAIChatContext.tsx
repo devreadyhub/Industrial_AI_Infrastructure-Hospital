@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { HospitalUpdate, useHospitalUpdates } from './useHospitalUpdates';
+import { useToast } from './useToast';
 
 export interface ChatContextMessage {
   role: 'user' | 'assistant' | 'system';
@@ -19,6 +21,8 @@ const AIChatContext = createContext<AIChatContextType | undefined>(undefined);
 
 export const AIChatContextProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [messages, setMessages] = useState<ChatContextMessage[]>([]);
+  const queryClient = useQueryClient();
+  const { addToast } = useToast();
 
   // Subscribe to hospital updates
   const handleHospitalUpdate = useCallback(
@@ -31,13 +35,28 @@ export const AIChatContextProvider: React.FC<{ children: React.ReactNode }> = ({
       } else if (update.eventType === 'BILLING_RECORD_UPDATED') {
         const { invoiceNumber, paymentStatus, amountDue, patientId } = update.data;
         systemNote = `[System Event] Billing record "${invoiceNumber}" (Patient ID: ${patientId}) payment status changed to "${paymentStatus}". Amount due: ${amountDue}`;
+      } else if (update.eventType === 'PATIENT_ADMITTED') {
+        const { patientName, ward } = update.data || {};
+        systemNote = `[System Event] New admission: ${patientName} admitted to ${ward}`;
+        // Invalidate clinical query so Recent Admissions refresh
+        try {
+          queryClient.invalidateQueries({ queryKey: ['clinical'] });
+        } catch (e) {
+          console.warn('Failed to invalidate clinical query on patient admitted', e);
+        }
+        // Show a small toast to the user for quick visibility
+        try {
+          addToast({ message: `New admission: ${patientName} → ${ward}`, type: 'info', duration: 6000 });
+        } catch (e) {
+          // best-effort
+        }
       }
 
       if (systemNote) {
         addSystemNote(systemNote);
       }
     },
-    [],
+    [queryClient],
   );
 
   useHospitalUpdates({

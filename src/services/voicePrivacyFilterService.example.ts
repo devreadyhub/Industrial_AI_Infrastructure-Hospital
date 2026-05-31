@@ -46,7 +46,7 @@ export const example2_ttsIntegration = async () => {
     try {
       const { text } = req.body;
       const userRole = req.user?.role ?? 'visitor';
-      const userId = req.user?.id;
+      const userId = req.user?.staffId;
 
       // Generate audio with privacy filtering
       const audioBuffer = await generatePrivateAudio(text, userRole, userId);

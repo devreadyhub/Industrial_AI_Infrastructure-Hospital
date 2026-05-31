@@ -10,11 +10,16 @@ import { useAuth } from '../contexts/AuthContext';
  */
 export const useJWTExpiryMonitor = () => {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { logout, isLoading } = useAuth();
   const expiryCheckIntervalRef = useRef<NodeJS.Timeout>();
   const auditCheckIntervalRef = useRef<NodeJS.Timeout>();
 
   useEffect(() => {
+    // Wait until AuthProvider finishes its initial check to avoid
+    // acting on stale/missing token values during app startup.
+    if (isLoading) {
+      return;
+    }
     /**
      * Check if JWT token has expired
      */
@@ -119,7 +124,7 @@ export const useJWTExpiryMonitor = () => {
       auditCheckIntervalRef.current = setInterval(checkForSecurityViolations, 60000);
     }
 
-    // Initial checks
+    // Initial checks (only after auth initialization)
     checkTokenExpiry();
     if (token) {
       checkForSecurityViolations();

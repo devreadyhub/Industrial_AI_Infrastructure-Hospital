@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { PharmacySalesSchema } from '../../schemas/validation';
+import RefreshIcon from '../icons/RefreshIcon';
+import { authFetch } from '../../utils/api';
 
 export const PharmacyTab: React.FC = () => {
   const [formData, setFormData] = useState({
     drugName: '',
+    drugCode: '',
     quantity: '',
     salePrice: '',
     saleDate: new Date().toISOString().slice(0, 16),
@@ -16,9 +19,10 @@ export const PharmacyTab: React.FC = () => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: name === 'quantity' ? (value ? parseInt(value) : '') : 
-              name === 'salePrice' ? (value ? parseFloat(value) : '') : 
-              value,
+      [name]:
+        name === 'quantity' ? (value ? parseInt(value) : '') :
+        name === 'salePrice' ? (value ? parseFloat(value) : '') :
+        value,
     }));
     if (errors[name]) {
       setErrors((prev) => {
@@ -27,6 +31,13 @@ export const PharmacyTab: React.FC = () => {
         return newErrors;
       });
     }
+  };
+
+  const generateDrugCode = () => {
+    setFormData((prev) => ({
+      ...prev,
+      drugCode: prev.drugName ? prev.drugName.toUpperCase().replace(/\s+/g, '-') : `DRUG-${Date.now().toString().slice(-4)}`,
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -40,9 +51,8 @@ export const PharmacyTab: React.FC = () => {
         saleDate: new Date(formData.saleDate).toISOString(),
       });
 
-      const response = await fetch('/api/pharmacy/sales', {
+      const response = await authFetch('/api/pharmacy/sales', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(validatedData),
       });
 
@@ -51,6 +61,7 @@ export const PharmacyTab: React.FC = () => {
       setSuccess(true);
       setFormData({
         drugName: '',
+        drugCode: '',
         quantity: '',
         salePrice: '',
         saleDate: new Date().toISOString().slice(0, 16),
@@ -94,6 +105,30 @@ export const PharmacyTab: React.FC = () => {
             placeholder="e.g., Aspirin 500mg"
           />
           {errors.drugName && <p className="text-red-400 text-sm mt-1">{errors.drugName}</p>}
+        </div>
+
+        {/* Drug Code */}
+        <div>
+          <label className="block text-sm font-semibold text-slate-200 mb-2">Drug Code *</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              name="drugCode"
+              value={formData.drugCode}
+              onChange={handleChange}
+              className="flex-1 px-4 py-2 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., ASP-500"
+            />
+            <button
+              type="button"
+              onClick={generateDrugCode}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700"
+            >
+              <RefreshIcon className="w-4 h-4" />
+              Generate
+            </button>
+          </div>
+          {errors.drugCode && <p className="text-red-400 text-sm mt-1">{errors.drugCode}</p>}
         </div>
 
         {/* Quantity */}

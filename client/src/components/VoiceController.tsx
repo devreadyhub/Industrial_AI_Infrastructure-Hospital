@@ -1,5 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Mic, MicOff, Volume2 } from 'lucide-react';
+import { getBackendUrl } from '../utils/backend';
+import { authFetch } from '../utils/api';
 
 interface VoiceControllerProps {
   onTranscription: (text: string) => void;
@@ -62,7 +64,7 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
 
-      const backendUrl = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:4000';
+      const backendUrl = getBackendUrl();
       const response = await fetch(`${backendUrl}/api/ai/transcribe`, {
         method: 'POST',
         body: formData,
@@ -84,7 +86,18 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
     }
   };
 
-  const speakResponse = useCallback((text: string) => {
+  const speakResponse = useCallback(async (text: string) => {
+    if (!window.speechSynthesis) {
+      try {
+        await speakTextUsingServerTTS(text);
+        return;
+      } catch (error) {
+        console.error('Server TTS also failed:', error);
+        onError('Speech synthesis failed');
+        return;
+      }
+    }
+
     if (!speechSynthesisRef.current) {
       speechSynthesisRef.current = window.speechSynthesis;
     }
@@ -96,9 +109,14 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
 
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => {
+    utterance.onerror = async () => {
       setIsSpeaking(false);
-      onError('Speech synthesis failed');
+      try {
+        await speakTextUsingServerTTS(text);
+      } catch (error) {
+        console.error('Server TTS fallback failed:', error);
+        onError('Speech synthesis failed');
+      }
     };
 
     speechSynthesisRef.current.speak(utterance);
@@ -166,22 +184,67 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
   );
 };
 
-// Export speak function for external use
-export const speakText = (text: string): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    if (!window.speechSynthesis) {
-      reject(new Error('Speech synthesis not supported'));
-      return;
-    }
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    utterance.volume = 0.8;
-
-    utterance.onend = () => resolve();
-    utterance.onerror = (event) => reject(new Error(`Speech synthesis error: ${event.error}`));
-
-    window.speechSynthesis.speak(utterance);
+const speakTextUsingServerTTS = async (text: string): Promise<void> => {
+  const backendUrl = getBackendUrl();
+  const response = await authFetch(`${backendUrl}/api/ai/tts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ text }),
   });
+
+  if (!response.ok) {
+    throw new Error(`Server TTS failed: ${response.statusText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+  const audioUrl = URL.createObjectURL(blob);
+  const audio = new Audio(audioUrl);
+
+  return new Promise((resolve, reject) => {
+    audio.onended = () => {
+      URL.revokeObjectURL(audioUrl);
+      resolve();
+    };
+    audio.onerror = (event) => {
+      URL.revokeObjectURL(audioUrl);
+      reject(new Error('Server audio playback failed'));
+    };
+    audio.play().catch((err) => {
+      URL.revokeObjectURL(audioUrl);
+      reject(err);
+    });
+  });
+};
+
+// Export speak function for external use
+export const speakText = async (text: string): Promise<void> => {
+  if (typeof window === 'undefined') {
+    throw new Error('Speech synthesis is unavailable in this environment.');
+  }
+
+  if (window.speechSynthesis) {
+    return new Promise((resolve, reject) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      utterance.volume = 0.8;
+
+      utterance.onend = () => resolve();
+      utterance.onerror = async () => {
+        try {
+          await speakTextUsingServerTTS(text);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+
+  return speakTextUsingServerTTS(text);
 };

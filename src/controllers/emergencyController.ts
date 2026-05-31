@@ -1,10 +1,19 @@
 import { Request, Response } from 'express';
+import { PrismaClient } from '@prisma/client';
 import { EmergencyService, EmergencyTriggerRequest } from '../services/emergencyService';
+
+const prisma = new PrismaClient();
 
 export const handleTriggerEmergency = async (req: Request, res: Response): Promise<void> => {
   try {
     const { incidentType, location, description, patientId }: EmergencyTriggerRequest = req.body;
-    const triggeredByStaffId = (req as any).user?.id;
+    // Resolve authenticated user's staffCode to numeric staff ID
+    const triggeredByStaffCode = (req as any).user?.staffId;
+    let triggeredByStaffId: number | undefined = undefined;
+    if (triggeredByStaffCode) {
+      const staff = await prisma.staff.findUnique({ where: { staffCode: String(triggeredByStaffCode) } });
+      triggeredByStaffId = staff?.id;
+    }
 
     if (!incidentType || !location) {
       res.status(400).json({ error: 'Incident type and location are required' });
@@ -33,7 +42,12 @@ export const handleResolveEmergency = async (req: Request, res: Response): Promi
   try {
     const { id } = req.params;
     const { actionsTaken } = req.body;
-    const resolvedByStaffId = (req as any).user?.id;
+    const resolvedByStaffCode = (req as any).user?.staffId;
+    let resolvedByStaffId: number | undefined = undefined;
+    if (resolvedByStaffCode) {
+      const staff = await prisma.staff.findUnique({ where: { staffCode: String(resolvedByStaffCode) } });
+      resolvedByStaffId = staff?.id;
+    }
 
     if (!actionsTaken) {
       res.status(400).json({ error: 'Actions taken are required' });
